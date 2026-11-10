@@ -66,7 +66,7 @@ async function processJob(job){try{
   const parent=jobs.get(job.parentId);if(!parent||parent.status!=='done')throw new Error('Исходник недоступен.');job.status='converting';job.file='audio.'+job.format;
   if(parent.cover&&job.settings.cover){await copyFile(path.join(downloads,parent.id,'cover.jpg'),path.join(dir,'cover.jpg'));job.cover=true;}
   await run(ffmpeg,encodeArgs({...job,coverPath:job.cover?path.join(dir,'cover.jpg'):undefined},path.join(downloads,parent.id,parent.file),path.join(dir,job.file)),()=>{},job);
-  job.size=(await stat(path.join(dir,job.file))).size;job.status='done';job.progress=100;await exportJob(job);return;
+  job.size=(await stat(path.join(dir,job.file))).size;job.progress=100;await exportJob(job);job.status='done';return;
  }
  job.status='info';
  const info=JSON.parse(await run(ytdlp,['--ignore-config','--js-runtimes',process.env.YOUMP3_NODE ? 'node:'+process.env.YOUMP3_NODE : 'node','--no-playlist','--socket-timeout','30','--skip-download','--dump-single-json','--',job.url],()=>{},job));
@@ -88,7 +88,7 @@ async function processJob(job){try{
  await run(ffmpeg,encodeArgs({...job,coverPath:job.cover?path.join(dir,'cover.jpg'):undefined},path.join(dir,source),path.join(dir,job.file)),()=>{},job);
  await unlink(path.join(dir,source));
  if(!job.file)throw new Error('Конвертация не создала файл.');
- job.size=(await stat(path.join(dir,job.file))).size;job.status='done';job.progress=100;await exportJob(job);
+ job.size=(await stat(path.join(dir,job.file))).size;job.progress=100;await exportJob(job);job.status='done';
  }catch(e){if(job.status!=='canceled'){job.status='error';job.error=e.message.replaceAll(root,'[локальная папка]').slice(-2000);}}finally{await persist();}}
 function json(res,status,data){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(data));}
 async function bodyJSON(req){let b='';for await(const chunk of req){b+=chunk;if(b.length>16384)throw new Error('Слишком большой запрос');}return JSON.parse(b);}
@@ -160,7 +160,7 @@ export const server=http.createServer(async(req,res)=>{try{
   const checks=await Promise.allSettled([run(ytdlp,['--version']),run(ffmpeg,['-version'])]);
   return json(res,200,{ready:checks.every(x=>x.status==='fulfilled'),ytdlp:checks[0].status==='fulfilled',ffmpeg:checks[1].status==='fulfilled'});
  }
- if(u.pathname==='/api/jobs'&&req.method==='GET')return json(res,200,[...jobs.values()].map(({file,...j})=>j));
+ if(u.pathname==='/api/jobs'&&req.method==='GET'){await saving;return json(res,200,[...jobs.values()].map(({file,...j})=>j));}
  if(u.pathname==='/api/jobs'&&req.method==='POST'){
   if(!req.headers['content-type']?.startsWith('application/json'))return json(res,415,{error:'Ожидается JSON'});
   let body='';for await(const b of req){body+=b;if(body.length>4096)return json(res,413,{error:'Слишком большой запрос'});}
