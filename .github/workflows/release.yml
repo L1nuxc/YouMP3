@@ -28,6 +28,7 @@ jobs:
           Expand-Archive ffmpeg.zip ffmpeg-dist
           $ffmpegRoot = (Get-ChildItem ffmpeg-dist -Directory | Select-Object -First 1).FullName
           Copy-Item "$ffmpegRoot/bin/ffmpeg.exe" tools/ffmpeg.exe
+          (Resolve-Path tools).Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           Copy-Item "$ffmpegRoot/LICENSE" tools/licenses/FFmpeg-GPL.txt
           Copy-Item "$ffmpegRoot/README.txt" tools/licenses/FFmpeg-build.txt
           Copy-Item node_modules/essentia.js/LICENSE tools/licenses/Essentia-AGPL.txt
