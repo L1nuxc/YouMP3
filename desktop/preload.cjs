@@ -1,0 +1,2 @@
+const {contextBridge,ipcRenderer}=require('electron');
+contextBridge.exposeInMainWorld('desktop',{updateState:()=>ipcRenderer.invoke('updates-state'),checkUpdate:()=>ipcRenderer.invoke('updates-check'),installUpdate:()=>ipcRenderer.invoke('updates-install'),chooseFolder:()=>ipcRenderer.invoke('choose-folder'),readClipboard:()=>ipcRenderer.invoke('clipboard-read'),writeClipboard:text=>ipcRenderer.invoke('clipboard-write',text),openSource:url=>ipcRenderer.invoke('open-source',url)});

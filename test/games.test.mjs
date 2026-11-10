@@ -1,0 +1,5 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {slide2048,mineCounts,maze,sudokuSolved,collision,rotate} from '../public/games-rules.js';
+test('2048 merges once per move and counts score',()=>{const r=slide2048([2,2,2,2,...Array(12).fill(0)],'left');assert.deepEqual(r.board.slice(0,4),[4,4,0,0]);assert.equal(r.score,8);assert.equal(slide2048(Array(16).fill(0),'down').moved,false);});
+test('mines count edges; block collision and rotation',()=>{assert.equal(mineCounts([0])[1],1);assert.equal(mineCounts([0])[63],0);assert.equal(collision(Array(200).fill(0),[[1,1]],9,0),true);assert.deepEqual(rotate([[1,0],[1,1]]),[[1,1],[1,0]]);});
+test('maze exit is reachable',()=>{const g=maze(),seen=new Set(['1,1']),q=[[1,1]];while(q.length){const [x,y]=q.shift();for(const [a,b]of [[x+1,y],[x-1,y],[x,y+1],[x,y-1]])if(g[b]?.[a]===0&&!seen.has(a+','+b)){seen.add(a+','+b);q.push([a,b]);}}assert.ok(seen.has('13,13'));});
+test('sudoku validates rows columns and boxes',()=>{const b=Array.from({length:81},(_,i)=>(Math.floor(i/9)*3+Math.floor(Math.floor(i/9)/3)+i%9)%9+1);assert.ok(sudokuSolved(b));b[0]=b[1];assert.equal(sudokuSolved(b),false);});

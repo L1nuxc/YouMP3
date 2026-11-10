@@ -1,0 +1,53 @@
+name: Build Windows release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Prepare runtime and codecs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force tools/licenses | Out-Null
+          Copy-Item (Get-Command node).Source tools/node.exe
+          Invoke-WebRequest https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe -OutFile tools/yt-dlp.exe
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip ffmpeg-dist
+          $ffmpegRoot = (Get-ChildItem ffmpeg-dist -Directory | Select-Object -First 1).FullName
+          Copy-Item "$ffmpegRoot/bin/ffmpeg.exe" tools/ffmpeg.exe
+          Copy-Item "$ffmpegRoot/LICENSE" tools/licenses/FFmpeg-GPL.txt
+          Copy-Item "$ffmpegRoot/README.txt" tools/licenses/FFmpeg-build.txt
+          Copy-Item node_modules/essentia.js/LICENSE tools/licenses/Essentia-AGPL.txt
+          node node_modules/electron/install.js
+          Copy-Item node_modules/electron/dist/LICENSE tools/licenses/Electron-LICENSE.txt
+          Copy-Item node_modules/electron/dist/LICENSES.chromium.html tools/licenses/LICENSES.chromium.html
+          $nodeVersion = node -p process.version
+          Invoke-WebRequest "https://raw.githubusercontent.com/nodejs/node/$nodeVersion/LICENSE" -OutFile tools/licenses/Node-LICENSE.txt
+          Invoke-WebRequest https://raw.githubusercontent.com/yt-dlp/yt-dlp/master/THIRD_PARTY_LICENSES.txt -OutFile tools/licenses/yt-dlp-notices.txt
+      - run: npm test
+      - run: npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Publish installer and updater manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          gh release view "v$version" --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { Write-Host 'Version already released; keeping immutable release'; exit 0 }
+          $assets = @((Get-ChildItem release/*Setup*.exe).FullName) + @((Get-ChildItem release/*.blockmap).FullName) + @((Resolve-Path release/latest.yml).Path, (Resolve-Path build/YouMP3-source.zip).Path)
+          gh release create "v$version" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "YouMP3 $version" --notes 'Windows x64. Download the Setup EXE. Runtime and audio tools included. Existing app data is retained.' @assets
