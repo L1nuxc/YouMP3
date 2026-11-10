@@ -39,6 +39,7 @@ jobs:
           Invoke-WebRequest "https://raw.githubusercontent.com/nodejs/node/$nodeVersion/LICENSE" -OutFile tools/licenses/Node-LICENSE.txt
           Invoke-WebRequest https://raw.githubusercontent.com/yt-dlp/yt-dlp/master/THIRD_PARTY_LICENSES.txt -OutFile tools/licenses/yt-dlp-notices.txt
       - run: npm test
+      - run: npm run test:ui
       - run: npm run dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

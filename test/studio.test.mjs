@@ -21,7 +21,7 @@ test('stream seeking, tags, favorites, duplicate protection, trim queue and auto
  assert.equal((await post('/api/correct/'+id,{bpm:148,key:'Eb',scale:'minor'})).status,200);
  assert.equal((await post('/api/correct/'+id,{bpm:999,key:'Eb',scale:'minor'})).status,400);
  assert.equal((await post('/api/metadata/'+id,{title:'Track',artist:'Artist',album:'Album'})).status,200);
- const edited=(await(await fetch(origin+'/api/jobs')).json()).find(j=>j.id===id);assert.equal(edited.manualAnalysis.bpm,148);assert.equal(edited.album,'Album');assert.equal(edited.editing,false);
+ const edited=(await(await fetch(origin+'/api/jobs')).json()).find(j=>j.id===id);assert.equal(edited.manualAnalysis.bpm,148);assert.equal(edited.album,'Album');assert.ok(edited.modified>0);assert.equal(edited.editing,false);
  const dupe=await post('/api/jobs',{url:'https://youtu.be/jNQXAC9IVRw',service:'youtube',format:'mp3',quality:'192'});assert.equal(dupe.status,409);assert.equal((await dupe.json()).duplicateId,id);
  assert.equal((await post('/api/trim/'+id,{start:5,end:2})).status,400);
  const trimmed=await(await post('/api/trim/'+id,{start:1,end:3})).json();let job;for(let i=0;i<80;i++){job=(await(await fetch(origin+'/api/jobs')).json()).find(j=>j.id===trimmed.id);if(['done','error'].includes(job?.status))break;await new Promise(r=>setTimeout(r,100));}

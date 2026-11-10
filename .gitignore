@@ -23,3 +23,5 @@ Thumbs.db
 !/scripts/smoke.mjs
 !/scripts/check-search.mjs
 !/scripts/package-source.ps1
+
+!/scripts/check-ui.cjs

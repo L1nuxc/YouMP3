@@ -20,7 +20,7 @@ app.whenReady().then(async()=>{
  session.defaultSession.on('will-download',(_event,item)=>{
   item.setSaveDialogOptions({defaultPath:path.join(app.getPath('downloads'),item.getFilename())});
  });
- window=new BrowserWindow({width:1160,height:900,minWidth:640,minHeight:680,title:'YouMP3',backgroundColor:'#101210',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
+ window=new BrowserWindow({width:1440,height:960,minWidth:760,minHeight:640,title:'YouMP3',backgroundColor:'#0b0b0b',icon:path.join(__dirname,'icon.png'),titleBarStyle:'hidden',titleBarOverlay:{color:'#0d0d0d',symbolColor:'#b0b0b0',height:44},autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
  const trusted=event=>{if(event.sender!==window.webContents||event.senderFrame.url.split('/').slice(0,3).join('/')!==origin)throw new Error('Недопустимый источник');};
  require('./updates.cjs')(app,ipcMain,trusted,backend);
  ipcMain.handle('choose-folder',async event=>{trusted(event);const result=await dialog.showOpenDialog(window,{properties:['openDirectory','createDirectory'],defaultPath:backend.settings.folder||app.getPath('downloads')});if(!result.canceled)await backend.setFolder(result.filePaths[0]);return backend.settings;});

@@ -1,6 +1,6 @@
 {
   "name": "yoump3-local",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
     "desktop": "electron .",
     "dist": "electron-builder --win nsis --x64 --publish never",
     "pack": "electron-builder --win --dir --x64",
-    "predist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-source.ps1"
+    "predist": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-source.ps1",
+    "test:ui": "electron scripts/check-ui.cjs"
   },
   "engines": {
     "node": ">=22"
@@ -61,7 +62,8 @@
       "target": [
         "nsis"
       ],
-      "signAndEditExecutable": false
+      "signExecutable": false,
+      "icon": "desktop/icon.ico"
     },
     "nsis": {
       "oneClick": false,
