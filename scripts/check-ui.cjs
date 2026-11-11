@@ -1,32 +1,498 @@
-const {app,BrowserWindow}=require('electron'),fs=require('node:fs/promises'),path=require('node:path'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
-app.disableHardwareAcceleration();require('node:fs').mkdirSync(path.resolve('build/ui-electron-profile'),{recursive:true});app.setPath('userData',path.resolve('build/ui-electron-profile'));app.commandLine.appendSwitch('force-device-scale-factor','1');app.on('window-all-closed',()=>{});
-const delay=ms=>new Promise(r=>setTimeout(r,ms));
-app.whenReady().then(async()=>{let backend,w;const logs=[];let phase='setup';try{
- const root=path.resolve('build/designqa-data');await fs.mkdir(root,{recursive:true});const ffmpeg=path.resolve('tools/ffmpeg.exe'),fixture=path.join(root,'fixture.mp3');try{await fs.stat(fixture);}catch{execFileSync(ffmpeg,['-v','error','-f','lavfi','-i','sine=frequency=440:duration=20','-c:a','libmp3lame',fixture],{windowsHide:true});}
- const titles=['NO SIGNAL','Midnight Drive','Dune','Afterhours','Still','Warm Tape'],artists=['TEVEK','Kairo','LOWKEY','Kairo','TEVEK','LOWKEY'],colors=[['#712620','#19110f'],['#183f57','#0b1827'],['#b29465','#28251e'],['#73808a','#181c20'],['#41483f','#111614'],['#a5572b','#281811']],jobs=[];
- const artWindow=new BrowserWindow({show:false,width:512,height:512,frame:false,webPreferences:{sandbox:true}});artWindow.setContentSize(512,512);
- for(let i=0;i<6;i++){const id='44444444-4444-4444-4444-'+String(i+1).padStart(12,'0'),dir=path.join(root,id);await fs.mkdir(dir,{recursive:true});await fs.copyFile(fixture,path.join(dir,'audio.mp3'));
- let lines='';for(let n=0;n<18;n++)lines+='<ellipse cx="'+(150+n*10)+'" cy="260" rx="'+(40+n*7)+'" ry="'+(55+n*9)+'" fill="none" stroke="#ffffff" stroke-opacity="'+(.07+n*.005)+'"/>';
- const art='<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="'+colors[i][0]+'"/><stop offset="1" stop-color="'+colors[i][1]+'"/></linearGradient></defs><rect width="512" height="512" fill="url(#b)"/>'+lines+'<text x="42" y="70" font-family="Arial" font-size="15" letter-spacing="5" fill="#ffffff" opacity=".7">'+artists[i]+'</text><text x="42" y="455" font-family="Arial" font-size="30" letter-spacing="2" fill="#ffffff" opacity=".9">'+titles[i]+'</text></svg>';
- await artWindow.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent('<html><style>*{margin:0}</style>'+art+'</html>'));await delay(160);await fs.writeFile(path.join(dir,'cover.jpg'),(await artWindow.webContents.capturePage()).toJPEG(90));
- jobs.push({id,title:titles[i],track:titles[i],artist:artists[i],format:'mp3',quality:'192',duration:20,file:'audio.mp3',size:(await fs.stat(fixture)).size,status:'done',cover:true,service:i===2||i===5?'soundcloud':'youtube',favorite:i===0,created:100-i,description:'145 BPM. Key: F# minor',descriptionAnalysis:{source:'description',bpm:145,key:'F#',scale:'minor'},tags:i===0?['биты']:[]});}
- artWindow.destroy();await fs.writeFile(path.join(root,'library.json'),JSON.stringify(jobs));process.env.PORT='0';process.env.YOUMP3_DOWNLOADS=root;process.env.FFMPEG_PATH=ffmpeg;process.env.YTDLP_PATH=path.resolve('tools/yt-dlp.exe');
- backend=await import(pathToFileURL(path.resolve('server.mjs')).href);const port=await backend.listening;
- w=new BrowserWindow({show:false,width:1440,height:960,frame:false,webPreferences:{sandbox:true,contextIsolation:true,backgroundThrottling:false,offscreen:true}});w.setContentSize(1440,960);
- w.webContents.on('console-message',event=>{if(event.level==='error'&&String(event.sourceId).includes('127.0.0.1'))logs.push(event.message);});w.webContents.session.webRequest.onBeforeRequest({urls:['*://*.youtube-nocookie.com/*','*://w.soundcloud.com/*']},(_details,callback)=>callback({cancel:true}));
- await w.loadURL('http://127.0.0.1:'+port);await w.webContents.insertCSS('*{animation:none!important;transition:none!important;scroll-behavior:auto!important}');await delay(500);
- phase='library';const result=await w.webContents.executeJavaScript("(async()=>{\n const assert=(ok,msg)=>{if(!ok)throw Error(msg)},wait=ms=>new Promise(r=>setTimeout(r,ms));\n for(let n=0;n<100&&document.querySelector('#count').textContent!=='6';n++)await wait(50);\n assert(document.querySelector('#count').textContent==='6','library failed to load');\n document.querySelector('button[data-page=\"library\"]').click();await wait(400);\n assert(document.querySelectorAll('.track-tile').length===6,'six album cards');\n document.querySelector('.tile-title').click();await wait(700);\n assert(document.querySelector('#track-inspector').textContent.includes('Из описания'),'source label');\n assert(document.querySelector('.mini-wave'),'real waveform in inspector');\n assert(document.querySelector('#track-inspector .metric').textContent.includes('145'),'BPM readout');\n const endHandle=document.querySelectorAll('.mini-handle')[1];endHandle.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',shiftKey:true,bubbles:true}));\n document.querySelector('.mini-trim').click();await wait(400);\n assert(document.querySelector('#trim-dialog').open,'trim dialog');\n assert(Number(document.querySelector('#trim-end').value)<20,'mini trim selection carried into editor');\n document.querySelector('[data-close=\"trim-dialog\"]').click();\n const correction=document.querySelector('[aria-label=\"Исправить BPM / ключ\"]');correction.click();assert(document.querySelector('#correction-dialog').open,'correction dialog');assert(document.querySelector('#correct-bpm').value==='145','correction prefill');document.querySelector('#correct-close').click();\n const menu=document.querySelector('#track-inspector .track-menu');menu.open=true;[...menu.querySelectorAll('button')].find(b=>b.textContent==='Теги файла').click();assert(document.querySelector('#metadata-dialog').open,'metadata dialog');document.querySelector('#meta-close').click();\n document.querySelector('button[data-page=\"favorites\"]').click();assert(document.querySelectorAll('.track-tile').length===1,'favorites navigation');\n document.querySelector('button[data-page=\"library\"]').click();document.querySelector('[data-filter=\"soundcloud\"]').click();assert(document.querySelectorAll('.track-tile').length===2,'source filter');document.querySelector('[data-filter=\"\"]').click();\n document.querySelector('#search').value='Dune';document.querySelector('#search').dispatchEvent(new Event('input'));assert(document.querySelectorAll('.track-tile').length===1,'library search');document.querySelector('#search').value='';document.querySelector('#search').dispatchEvent(new Event('input'));\n document.querySelector('.tile-cover').click();await wait(300);assert(!document.querySelector('#player').classList.contains('is-empty'),'persistent player');assert(document.querySelector('#audio').src.includes('/api/stream/'),'actual audio source');\n document.querySelector('#play-pause').click();document.querySelector('#sort').value='title';document.querySelector('#sort').dispatchEvent(new Event('change'));\n assert(document.documentElement.scrollWidth<=innerWidth,'horizontal overflow');return 'library, favorites, filters, search, player, trim, metadata and correction PASS';\n})()");
- await w.webContents.executeJavaScript("document.querySelector('.mini-wave').scrollIntoView({block:'center',behavior:'instant'})");
-const handle=await w.webContents.executeJavaScript("(()=>{const h=document.querySelectorAll('.mini-handle')[1],r=h.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),before:Number(h.getAttribute('aria-valuenow'))};})()");
-w.webContents.sendInputEvent({type:'mouseMove',x:handle.x,y:handle.y});w.webContents.sendInputEvent({type:'mouseDown',x:handle.x,y:handle.y,button:'left',clickCount:1});w.webContents.sendInputEvent({type:'mouseMove',x:handle.x-25,y:handle.y});w.webContents.sendInputEvent({type:'mouseUp',x:handle.x-25,y:handle.y,button:'left',clickCount:1});await delay(100);
-const afterDrag=await w.webContents.executeJavaScript("Number(document.querySelectorAll('.mini-handle')[1].getAttribute('aria-valuenow'))");await w.webContents.executeJavaScript("document.querySelector('#context-panel').scrollTop=0");if(!(afterDrag<handle.before))throw Error('Actual pointer drag did not move trim handle');
-await delay(250);await fs.writeFile(path.resolve('build/design-library.png'),(await w.webContents.capturePage()).toPNG());
- await w.webContents.executeJavaScript("document.querySelector('button[data-page=\"download\"]').click()");await delay(250);await fs.writeFile(path.resolve('build/design-download.png'),(await w.webContents.capturePage()).toPNG());
- await w.webContents.executeJavaScript("document.querySelector('button[data-page=\"settings\"]').click()");await delay(200);await fs.writeFile(path.resolve('build/design-settings.png'),(await w.webContents.capturePage()).toPNG());
- phase='search';const searchResult=await w.webContents.executeJavaScript("(async()=>{\n const assert=(ok,msg)=>{if(!ok)throw Error(msg)},wait=ms=>new Promise(r=>setTimeout(r,ms));\n document.querySelector('button[data-page=\"download\"]').click();document.querySelector('#url').value='https://www.youtube.com/watch?v=jNQXAC9IVRw';document.querySelector('#formats button:nth-child(2)').click();assert(document.querySelector('#url').value.includes('jNQXAC9IVRw'),'format click cleared pasted link');\n const baseFetch=window.fetch,seed=await(await baseFetch('/api/jobs')).json();let queue=false;\n const items=seed.slice(0,2).map((j,i)=>({id:i?'BaW_jenozKc':'jNQXAC9IVRw',service:'youtube',url:'https://www.youtube.com/watch?v='+(i?'BaW_jenozKc':'jNQXAC9IVRw'),title:j.title+' — type beat',artist:j.artist,duration:178+i*20,views:47000,thumbnail:'/api/cover/'+j.id}));\n window.fetch=async(url,opts)=>{if(url==='/api/search')return new Response(JSON.stringify({id:'design'}));if(url==='/api/search/design')return new Response(JSON.stringify({status:'done',items}));if(String(url).startsWith('/api/description/'))return new Response(JSON.stringify({status:'done',description:'BPM: 145\\nKey: F# minor\\nTest fixture description.'}));if(url==='/api/jobs'&&opts?.method==='POST'){queue=true;return new Response(JSON.stringify({id:'fake-download'}),{status:202});}if(url==='/api/jobs'&&queue)return new Response(JSON.stringify([...seed,{id:'55555555-5555-5555-5555-555555555555',title:'Midnight Drive',artist:'Kairo',status:'downloading',progress:64,format:'mp3',service:'youtube',created:200,thumbnail:'/api/cover/'+seed[1].id},{id:'55555555-5555-5555-5555-555555555556',title:'Warm Tape',artist:'LOWKEY',status:'queued',progress:0,format:'mp3',service:'soundcloud',created:201,thumbnail:'/api/cover/'+seed[5].id}]));return baseFetch(url,opts);};\n document.querySelector('button[data-page=\"discover\"]').click();document.querySelector('#discover-query').value='Tevek type beat';document.querySelector('#discover-form').requestSubmit();for(let i=0;i<60&&document.querySelectorAll('.search-card').length!==2;i++)await wait(50);assert(document.querySelectorAll('.search-card').length===2,'online search results');\n document.querySelector('.result-visual').click();assert(document.querySelectorAll('.search-card').length===1,'opened result duplicated');\n for(let i=0;i<30&&!document.querySelector('#online-music')?.textContent.includes('145');i++)await wait(50);assert(document.querySelector('#online-music')?.textContent.includes('145'),'online BPM declaration');\n document.querySelector('#online-close').click();assert(document.querySelectorAll('.search-card').length===2,'closed result not restored');\n document.querySelector('.result-download').click();for(let n=0;n<70&&document.querySelector('#queue-count').textContent!=='2';n++)await wait(50);assert(document.querySelector('#queue-count').textContent==='2','queue side panel');\n document.querySelector('.result-visual').click();await wait(100);const frame=document.querySelector('#online-frame');frame.replaceChildren();const img=document.createElement('img');img.src='/api/cover/'+seed[0].id;img.style.cssText='width:100%;height:100%;object-fit:cover';frame.append(img);\n const desc=document.querySelector('.video-description');if(desc)desc.open=true;return 'search, duplicate hiding, declared BPM, queue, pasted link persistence PASS';\n})()");await delay(350);await fs.writeFile(path.resolve('build/design-search.png'),(await w.webContents.capturePage()).toPNG());
-phase='games';const gamesResult=await w.webContents.executeJavaScript("(async()=>{const wait=ms=>new Promise(r=>setTimeout(r,ms));document.querySelector('button[data-page=\"games\"]').click();for(let n=0;n<60&&document.querySelectorAll('.game-card').length!==16;n++)await wait(50);if(document.querySelectorAll('.game-card').length!==16)throw Error('Games menu missing');document.querySelector('.game-card').click();await wait(100);if(document.querySelector('#game-playroom').hidden)throw Error('Game launch failed');document.querySelector('#game-home').click();return 'games menu and game launch PASS';})()");
-w.setContentSize(1000,800);await delay(150);phase='1000';const responsive1000=await w.webContents.executeJavaScript("(async()=>{const assert=(ok,msg)=>{if(!ok)throw Error(msg)};document.querySelector('button[data-page=\"library\"]').click();assert(document.documentElement.scrollWidth<=innerWidth,'narrow horizontal overflow');assert(!!document.querySelector('button[data-page=\"library\"]').getAttribute('aria-label'),'compact nav label');document.querySelector('.tile-title').click();assert(getComputedStyle(document.querySelector('#context-panel')).display!=='none','compact inspector not accessible');return innerWidth+'px layout PASS';})()");await delay(250);await fs.writeFile(path.resolve('build/design-1000.png'),(await w.webContents.capturePage()).toPNG());
-w.setContentSize(760,720);await delay(150);phase='760';const responsive760=await w.webContents.executeJavaScript("(async()=>{const assert=(ok,msg)=>{if(!ok)throw Error(msg)};document.querySelector('button[data-page=\"library\"]').click();assert(document.documentElement.scrollWidth<=innerWidth,'narrow horizontal overflow');assert(!!document.querySelector('button[data-page=\"library\"]').getAttribute('aria-label'),'compact nav label');document.querySelector('.tile-title').click();assert(getComputedStyle(document.querySelector('#context-panel')).display!=='none','compact inspector not accessible');return innerWidth+'px layout PASS';})()");await delay(250);await fs.writeFile(path.resolve('build/design-760.png'),(await w.webContents.capturePage()).toPNG());
-await fs.writeFile(path.resolve('build/designqa-result.json'),JSON.stringify({ok:true,result,searchResult,gamesResult,responsive1000,responsive760,logs},null,2));w.destroy();backend.stopWorkers();backend.server.close();app.exit(0);
- }catch(e){await fs.writeFile(path.resolve('build/designqa-result.json'),JSON.stringify({ok:false,phase,error:String(e.stack),logs},null,2));w?.destroy();backend?.stopWorkers();backend?.server.close();app.exit(1);}
+const { app, BrowserWindow } = require('electron');
+const fs = require('node:fs/promises'),
+  path = require('node:path'),
+  { pathToFileURL } = require('node:url'),
+  { execFileSync } = require('node:child_process');
+app.disableHardwareAcceleration();
+require('node:fs').mkdirSync(path.resolve('build/ui-profile-v1'), { recursive: true });
+app.setPath('userData', path.resolve('build/ui-profile-v1'));
+app.on('window-all-closed', () => {});
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+app.whenReady().then(async () => {
+  let backend,
+    w,
+    phase = 'setup';
+  const logs = [];
+  try {
+    const root = path.resolve('build/ui-data-v1');
+    await fs.mkdir(root, { recursive: true });
+    const ffmpeg = path.resolve('tools/ffmpeg.exe'),
+      jobs = [];
+    for (let i = 0; i < 6; i++) {
+      const id = '44444444-4444-4444-4444-' + String(i + 1).padStart(12, '0'),
+        dir = path.join(root, id);
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, 'audio.mp3');
+      execFileSync(
+        ffmpeg,
+        [
+          '-v',
+          'error',
+          '-y',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=' + (220 + i * 80) + ':duration=12',
+          '-c:a',
+          'libmp3lame',
+          file,
+        ],
+        { windowsHide: true },
+      );
+      jobs.push({
+        id,
+        title: 'Тестовая запись ' + (i + 1),
+        artist: 'Локальный файл',
+        track: 'Тестовая запись ' + (i + 1),
+        format: 'mp3',
+        quality: '192',
+        file: 'audio.mp3',
+        size: (await fs.stat(file)).size,
+        status: 'done',
+        duration: 12,
+        service: i % 2 ? 'soundcloud' : 'youtube',
+        favorite: i === 0,
+        created: 100 - i,
+        descriptionAnalysis: { source: 'description', bpm: 120 + i * 5, key: 'C', scale: 'minor' },
+        tags: i === 0 ? ['пример'] : [],
+      });
+    }
+    await fs.writeFile(path.join(root, 'library.json'), JSON.stringify(jobs));
+    await fs.writeFile(
+      path.join(root, 'games.json'),
+      JSON.stringify({
+        schema: 2,
+        records: { 'snake-normal': 100 },
+        states: {
+          2048: { board: [2, 2, 0, 0, ...Array(12).fill(0)], score: 0 },
+          snake: {
+            body: [
+              [15, 7],
+              [14, 7],
+              [13, 7],
+            ],
+            dir: [1, 0],
+            food: [1, 1],
+            score: 0,
+            speed: 'normal',
+          },
+        },
+      }),
+    );
+    process.env.PORT = '0';
+    process.env.YOUMP3_DOWNLOADS = root;
+    process.env.FFMPEG_PATH = ffmpeg;
+    process.env.YTDLP_PATH = path.resolve('tools/yt-dlp.exe');
+    backend = await import(pathToFileURL(path.resolve('server.mjs')).href);
+    const port = await backend.listening;
+    w = new BrowserWindow({
+      show: false,
+      width: 1440,
+      height: 960,
+      frame: false,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        backgroundThrottling: false,
+        offscreen: true,
+      },
+    });
+    w.setContentSize(1440, 960);
+    w.webContents.on('console-message', (event) => {
+      if (event.level === 'error' && String(event.sourceId).includes('127.0.0.1'))
+        logs.push(event.message);
+    });
+    w.webContents.on('render-process-gone', (_e, d) => logs.push('Renderer exited: ' + d.reason));
+    w.webContents.session.webRequest.onBeforeRequest(
+      { urls: ['*://*.youtube-nocookie.com/*', '*://w.soundcloud.com/*'] },
+      (_d, callback) => callback({ cancel: true }),
+    );
+    await w.loadURL('http://127.0.0.1:' + port);
+    const run = (fn) => w.webContents.executeJavaScript('(' + fn.toString() + ')()');
+    phase = 'load';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 160 && document.querySelector('#count').textContent !== '6'; i++)
+        await wait(50);
+      if (document.querySelector('#count').textContent !== '6')
+        throw Error('Library failed to load');
+      localStorage.setItem('intro-complete', 'true');
+      document.querySelector('.intro-dialog')?.close();
+    });
+    phase = 'library';
+    await run(async () => {
+      const assert = (v, m) => {
+          if (!v) throw Error(m);
+        },
+        wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector('[data-page=library]').click();
+      await wait(200);
+      assert(document.querySelectorAll('.track-tile').length === 6, 'six tracks');
+      document.querySelector('.tile-title').click();
+      assert(
+        document.querySelector('#track-inspector').textContent.includes('Изменить данные'),
+        'visible actions',
+      );
+      assert(!document.querySelector('.mini-wave'), 'small trim editor removed');
+      assert(
+        document.querySelector('.metric-source').textContent.includes('Из описания'),
+        'analysis source',
+      );
+      document.querySelector('[aria-label="Исправить BPM / ключ"]').click();
+      assert(document.querySelector('#correction-dialog').open, 'correction dialog');
+      document.querySelector('#correct-close').click();
+      [...document.querySelectorAll('.visible-track-actions button')]
+        .find((b) => b.textContent === 'Изменить данные')
+        .click();
+      assert(document.querySelector('#metadata-dialog').open, 'metadata dialog');
+      document.querySelector('#meta-close').click();
+      document.querySelector('[aria-label=Список]').click();
+      assert(document.querySelector('#jobs').classList.contains('view-list'), 'list view');
+      document.querySelector('[aria-label=Таблица]').click();
+      assert(document.querySelector('#jobs').classList.contains('view-table'), 'table view');
+      document.querySelector('[aria-label=Обложки]').click();
+      document.querySelector('.track-select').click();
+      assert(!document.querySelector('.bulk-actions').hidden, 'bulk actions');
+      document.querySelector('[aria-label="Снять выделение"]').click();
+      document.querySelector('.tile-cover').click();
+      await wait(300);
+      assert(document.querySelector('#audio').src.includes('/api/stream/'), 'real audio');
+      document.querySelector('#audio').pause();
+      document.body.focus();
+      const before = document.querySelector('#audio').currentTime;
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight', bubbles: true }),
+      );
+      assert(document.querySelector('#audio').currentTime >= before + 4, 'seek hotkey');
+      assert(
+        getComputedStyle(document.querySelector('.tile-title')).outlineStyle === 'none',
+        'no focus outline',
+      );
+    });
+    await delay(200);
+    await fs.writeFile(
+      path.resolve('build/design-library.png'),
+      (await w.webContents.capturePage()).toPNG(),
+    );
+    phase = 'dropdown';
+    await run(async () => {
+      document.querySelector('[data-page=download]').click();
+      const select = document
+        .querySelector('#quality')
+        .parentElement.querySelector('.select-trigger');
+      select.click();
+      if (!document.querySelector('.select-popup')) throw Error('Custom dropdown missing');
+      const option = document.querySelector('.select-option');
+      option.click();
+      document.querySelector('#url').value = 'https://soundcloud.com/example/track';
+      document.querySelector('#url').dispatchEvent(new Event('input'));
+      if (document.body.dataset.service !== 'soundcloud') throw Error('Source detection');
+      document.querySelector('[data-service=youtube]').click();
+      document.querySelector('[data-service=soundcloud]').click();
+      if (!document.querySelector('#url').value.includes('soundcloud')) throw Error('Draft lost');
+    });
+    await delay(150);
+    await fs.writeFile(
+      path.resolve('build/design-download.png'),
+      (await w.webContents.capturePage()).toPNG(),
+    );
+    phase = 'trim';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector('[data-page=library]').click();
+      document.querySelector('.tile-title').click();
+      [...document.querySelectorAll('.visible-track-actions button')]
+        .find((b) => b.textContent === 'Обрезать трек')
+        .click();
+      for (
+        let n = 0;
+        n < 80 && !document.querySelector('#trim-wave-status').textContent.includes('Тяните');
+        n++
+      )
+        await wait(50);
+      if (!document.querySelector('#trim-dialog').open || !document.querySelector('#trim-fade-in'))
+        throw Error('Trim editor/fades missing');
+      document.querySelector('[data-close=trim-dialog]').click();
+    });
+    phase = 'games';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+        assert = (v, m) => {
+          if (!v) throw Error(m);
+        };
+      document.querySelector('[data-page=games]').click();
+      assert(document.querySelectorAll('.game-card').length === 4, 'exactly four games');
+      document.querySelector('[data-game=studio]').click();
+      const earn = document.querySelector('.studio-earn');
+      earn.focus();
+      const before = document.querySelector('.studio-scene b').textContent;
+      earn.click();
+      await wait(350);
+      assert(earn === document.querySelector('.studio-earn'), 'stable clicker button');
+      await wait(1100);
+      const saved = await (await fetch('/api/games')).json();
+      assert(saved.states.studio.coins >= 1, 'continuous clicker persistence');
+      assert(document.querySelector('.studio-scene b').textContent !== before, 'click income');
+      document.querySelector('#game-home').click();
+      document.querySelector('[data-game="2048"]').click();
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'ArrowLeft', key: 'ArrowLeft', bubbles: true }),
+      );
+      await wait(230);
+      assert(document.querySelector('#game-status').textContent.includes('4'), '2048 merge');
+      assert(document.querySelector('.number-tile.merged'), 'merge animation');
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true }),
+      );
+      assert(document.querySelectorAll('.number-tile').length === 2, '2048 undo');
+    });
+    await delay(200);
+    await fs.writeFile(
+      path.resolve('build/design-games.png'),
+      (await w.webContents.capturePage()).toPNG(),
+    );
+    phase = 'snake-and-guess';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+        assert = (v, m) => {
+          if (!v) throw Error(m);
+        };
+      document.querySelector('#game-home').click();
+      document.querySelector('[data-game=snake]').click();
+      assert(document.querySelector('.snake-field canvas'), 'snake canvas');
+      [...document.querySelectorAll('#game-controls button')]
+        .find((b) => b.textContent === 'Начать')
+        .click();
+      document.querySelector('#game-pause').click();
+      assert(!document.querySelector('#game-pause-message').hidden, 'snake pause');
+      assert(document.querySelector('.snake-overlay').textContent.length > 0, 'snake instructions');
+      document.querySelector('#game-pause').click();
+      for (let n = 0; n < 120 && !document.querySelector('.game-result'); n++) await wait(50);
+      assert(document.querySelector('.game-result'), 'snake collision result');
+      await wait(1200);
+      const saved = await (await fetch('/api/games')).json();
+      assert(
+        !saved.states.snake && saved.records['snake-normal'] === 100,
+        'finished game saved without new record',
+      );
+      document.querySelector('#game-home').click();
+      document.querySelector('[data-game=guess]').click();
+      assert(document.querySelector('[aria-label="Громкость угадай трек"]'), 'guess volume');
+      for (let n = 0; n < 100 && document.querySelector('.guess-listen').disabled; n++)
+        await wait(50);
+      assert(!document.querySelector('.guess-listen').disabled, 'guess audio ready');
+      document.querySelector('.guess-listen').click();
+      await wait(200);
+      assert(
+        [...document.querySelectorAll('.guess-choices button')].some((b) => !b.disabled),
+        'answers after listening',
+      );
+      document.querySelector('.guess-choices button').click();
+      assert(
+        document.querySelector('.guess-feedback').textContent.length > 0,
+        'round feedback persists',
+      );
+      document.querySelector('#game-home').click();
+    });
+    phase = 'delete';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      document.querySelector('[data-page=library]').click();
+      document.querySelector('.tile-title').click();
+      [...document.querySelectorAll('.visible-track-actions button')]
+        .find((b) => b.textContent === 'Удалить из библиотеки')
+        .click();
+      for (let n = 0; n < 100 && !document.querySelector('.undo-toast'); n++) await wait(50);
+      if (document.querySelectorAll('.track-tile').length !== 5)
+        throw Error('Trash did not remove track');
+      document.querySelector('.undo-toast button').click();
+      for (let n = 0; n < 100 && document.querySelectorAll('.track-tile').length !== 6; n++)
+        await wait(50);
+      if (document.querySelectorAll('.track-tile').length !== 6)
+        throw Error('Undo did not restore');
+    });
+    phase = 'online-controls';
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+        assert = (v, m) => {
+          if (!v) throw Error(m);
+        };
+      const originalFetch = window.fetch,
+        events = {
+          READY: 'ready',
+          PLAY: 'play',
+          PAUSE: 'pause',
+          PLAY_PROGRESS: 'progress',
+          ERROR: 'error',
+          FINISH: 'finish',
+        };
+      const factory = () => {
+        const handlers = {},
+          w = {
+            volume: 65,
+            position: 0,
+            bind: (name, fn) => {
+              handlers[name] = fn;
+              if (name === 'ready') setTimeout(fn, 20);
+            },
+            setVolume: (v) => (w.volume = v),
+            getVolume: (fn) => fn(w.volume),
+            getDuration: (fn) => fn(120000),
+            getPosition: (fn) => fn(w.position),
+            seekTo: (v) => (w.position = v),
+            pause: () => handlers.pause?.(),
+            play: () => handlers.play?.(),
+            toggle: () => handlers.play?.(),
+          };
+        window.__qaWidget = w;
+        return w;
+      };
+      factory.Events = events;
+      window.SC = { Widget: factory };
+      const items = [1, 2].map((i) => ({
+        id: 'qa' + i,
+        url: 'https://soundcloud.com/test-fixture/track-' + i,
+        title: 'Тестовый результат ' + i,
+        artist: 'Тест поиска',
+        service: 'soundcloud',
+        duration: 120,
+        views: 0,
+      }));
+      window.fetch = async (url, options) =>
+        url === '/api/search'
+          ? new Response(JSON.stringify({ id: 'qa' }))
+          : url === '/api/search/qa'
+            ? new Response(JSON.stringify({ status: 'done', items }))
+            : originalFetch(url, options);
+      document.querySelector('[data-page=discover]').click();
+      document.querySelector('[data-discover=soundcloud]').click();
+      document.querySelector('#discover-query').value = 'test';
+      document.querySelector('#discover-form').requestSubmit();
+      for (let n = 0; n < 80 && document.querySelectorAll('.result-visual').length !== 2; n++)
+        await wait(50);
+      assert(document.querySelectorAll('.result-visual').length === 2, 'search result flow');
+      document.querySelector('.result-visual').click();
+      for (
+        let n = 0;
+        n < 80 &&
+        (!document.querySelector('[aria-label="Громкость SoundCloud"]') ||
+          document.querySelector('[aria-label="Громкость SoundCloud"]').disabled);
+        n++
+      )
+        await wait(50);
+      const volume = document.querySelector('[aria-label="Громкость SoundCloud"]');
+      assert(volume && !volume.disabled, 'SoundCloud controls ready');
+      volume.value = 0.27;
+      volume.dispatchEvent(new Event('input'));
+      assert(Math.abs(window.__qaWidget.volume - 27) < 0.1, 'widget volume');
+      assert(
+        document.querySelector('#player-favorite').disabled,
+        'online favorite cannot edit a local track',
+      );
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp', bubbles: true }),
+      );
+      assert(Math.abs(window.__qaWidget.volume - 32) < 0.1, 'online volume hotkey');
+      document.querySelector('#seek').value = 10;
+      document.querySelector('#seek').dispatchEvent(new Event('input'));
+      assert(window.__qaWidget.position === 10000, 'online seek');
+      document.querySelector('#online-close').click();
+      assert(
+        !document.querySelector('#player-title').textContent.includes('Тестовый результат'),
+        'online close restores local player',
+      );
+      window.fetch = originalFetch;
+      window.__qaDownloads = 0;
+      let update = {
+        status: 'available',
+        version: '1.0.0',
+        next: '1.0.1',
+        message: 'Скачать обновление?',
+      };
+      window.desktop = {
+        updateState: async () => update,
+        checkUpdate: async () => update,
+        downloadUpdate: async () => {
+          window.__qaDownloads++;
+          update = { ...update, status: 'ready', message: 'Готово к установке' };
+          return update;
+        },
+        installUpdate: async () => ({ ok: true }),
+      };
+      for (let n = 0; n < 100 && document.querySelector('.update-notice').hidden; n++)
+        await wait(50);
+      assert(!document.querySelector('.update-notice').hidden, 'startup update notice');
+      assert(window.__qaDownloads === 0, 'no automatic download');
+      document.querySelector('.update-notice .primary').click();
+      await wait(100);
+      assert(window.__qaDownloads === 1, 'explicit update download');
+      document.querySelector('.update-notice [aria-label="Позже"]').click();
+    });
+    phase = 'settings';
+    await run(() => document.querySelector('[data-page=settings]').click());
+    await delay(450);
+    await fs.writeFile(
+      path.resolve('build/design-settings.png'),
+      (await w.webContents.capturePage()).toPNG(),
+    );
+    for (const width of [1000, 760]) {
+      phase = 'width-' + width;
+      w.setContentSize(width, 800);
+      await run(() => document.querySelector('[data-page=library]').click());
+      await delay(150);
+      await run(() => {
+        if (document.documentElement.scrollWidth > innerWidth) throw Error('Horizontal overflow');
+      });
+      await fs.writeFile(
+        path.resolve('build/design-' + width + '.png'),
+        (await w.webContents.capturePage()).toPNG(),
+      );
+    }
+    if (logs.length) throw Error(logs.join('\n'));
+    await fs.writeFile(
+      path.resolve('build/designqa-result.json'),
+      JSON.stringify(
+        {
+          ok: true,
+          checks: [
+            'library',
+            'list/table',
+            'bulk selection',
+            'visible actions',
+            'real audio',
+            'hotkeys',
+            'dropdowns',
+            'source detection',
+            'drafts',
+            'trim/fades',
+            'four games',
+            'stable clicker and continuous saves',
+            'SoundCloud volume and seeking (Widget API contract)',
+            'update notice and explicit download',
+            '2048 merge/undo',
+            'snake pause',
+            'guess audio/volume/feedback',
+            'trash/undo',
+            'responsive 1440/1000/760',
+          ],
+          logs,
+        },
+        null,
+        2,
+      ),
+    );
+    w.destroy();
+    backend.stopWorkers();
+    backend.server.close();
+    app.exit(0);
+  } catch (e) {
+    await fs.writeFile(
+      path.resolve('build/designqa-result.json'),
+      JSON.stringify({ ok: false, phase, error: String(e.stack), logs }, null, 2),
+    );
+    w?.destroy();
+    backend?.stopWorkers();
+    backend?.server.close();
+    app.exit(1);
+  }
 });

@@ -1,2 +1,9 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {correction} from '../src/edits.mjs';
-test('manual correction validates tempo and musical scale',()=>{assert.equal(correction({bpm:148,key:'Eb',scale:'minor'}).confirmed,true);for(const bpm of [NaN,0,999])assert.throws(()=>correction({bpm,key:'C',scale:'major'}));assert.throws(()=>correction({bpm:120,key:'X',scale:'minor'}));});
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { correction } from '../src/edits.mjs';
+test('manual correction validates tempo and musical scale', () => {
+  assert.equal(correction({ bpm: 148, key: 'Eb', scale: 'minor' }).confirmed, true);
+  for (const bpm of [NaN, 0, 999])
+    assert.throws(() => correction({ bpm, key: 'C', scale: 'major' }));
+  assert.throws(() => correction({ bpm: 120, key: 'X', scale: 'minor' }));
+});

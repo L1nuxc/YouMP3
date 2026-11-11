@@ -1,9 +1,144 @@
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
-import {spawn} from 'node:child_process';
-import {validate} from './options.mjs';
-import {terminateProcess} from './process.mjs';
-export function searchOptions(input){const service=input.service,query=String(input.query||'').trim(),page=Number(input.page||1);if(!['youtube','soundcloud'].includes(service))throw new Error('Выберите YouTube или SoundCloud.');if(query.length<2||query.length>200||/[\x00-\x1f]/.test(query))throw new Error('Введите запрос от 2 до 200 символов.');if(!Number.isInteger(page)||page<1||page>3)throw new Error('Доступны первые 30 результатов.');return {service,query,page};}
-export function searchArgs({service,query,page,details}){if(details)return ['--ignore-config','--skip-download','--dump-single-json','--no-playlist','--socket-timeout','12','--js-runtimes',process.env.YOUMP3_NODE?'node:'+process.env.YOUMP3_NODE:'node','--','https://www.youtube.com/watch?v='+query];const size=service==='soundcloud'?6:10;return ['--plugin-dirs',process.env.YOUMP3_SEARCH_PLUGINS||path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../search-plugins'),'--ignore-config','--flat-playlist','--dump-single-json','--no-warnings','--socket-timeout',service==='soundcloud'?'3':'12','--retries','0','--extractor-retries','1','--playlist-start',String((page-1)*size+1),'--playlist-end',String(page*size),'--',(service==='youtube'?'ytsearch':'scsearch')+(page*size)+':'+query];}
-export function normalizeResults(data,service){const seen=new Set(),items=[];for(const e of data.entries||[]){try{let candidate=service==='youtube'?`https://www.youtube.com/watch?v=${e.id}`:e.webpage_url||e.url;const url=validate({url:candidate,service,format:'mp3',quality:'192'}).url;if(seen.has(url))continue;seen.add(url);const images=[...(e.thumbnails||[])].reverse().map(t=>t.url);if(e.thumbnail)images.unshift(e.thumbnail);const thumbnail=images.find(s=>{try{const u=new URL(s);return u.protocol==='https:'&&['ytimg.com','sndcdn.com'].some(d=>u.hostname===d||u.hostname.endsWith('.'+d));}catch{return false;}})||null;items.push({id:String(e.id),service,url,title:String(e.title||'Без названия').slice(0,300),artist:String(e.artist||e.uploader||e.channel||'').slice(0,160),duration:Number.isFinite(e.duration)?e.duration:null,views:Number.isFinite(e.view_count)?e.view_count:null,thumbnail,description:String(e.description||'').slice(0,60000)});}catch{}}return items.slice(0,10);}
-export function startSearch(binary,options,children){let process;const promise=new Promise((resolve,reject)=>{let text='',error='',settled=false;const finish=(err,data)=>{if(settled)return;settled=true;clearTimeout(timer);err?reject(err):resolve(data);};process=spawn(binary,searchArgs(options),{windowsHide:true,shell:false});children.add(process);const timer=setTimeout(()=>{terminateProcess(process);finish(new Error('Поиск занял слишком много времени. Попробуйте ещё раз.'));},60000);process.stdout.on('data',b=>{text+=b;if(text.length>8*1024*1024){terminateProcess(process);finish(new Error('Слишком большой ответ поиска.'));}});process.stderr.on('data',b=>error=(error+b).slice(-1500));process.on('error',e=>finish(e));process.on('close',code=>{children.delete(process);if(code!==0)return finish(new Error(error||'Поиск недоступен. Попробуйте позже.'));try{finish(null,options.details?{description:String(JSON.parse(text).description||'Описание отсутствует.').slice(0,60000)}:normalizeResults(JSON.parse(text),options.service));}catch{finish(new Error('Не удалось прочитать результаты.'));}});});return {promise,cancel:()=>terminateProcess(process)};}
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import { validate } from './options.mjs';
+import { terminateProcess } from './process.mjs';
+export function searchOptions(input) {
+  const service = input.service,
+    query = String(input.query || '').trim(),
+    page = Number(input.page || 1);
+  if (!['youtube', 'soundcloud'].includes(service))
+    throw new Error('Выберите YouTube или SoundCloud.');
+  if (query.length < 2 || query.length > 200 || /[\x00-\x1f]/.test(query))
+    throw new Error('Введите запрос от 2 до 200 символов.');
+  if (!Number.isInteger(page) || page < 1 || page > 3)
+    throw new Error('Доступны первые 30 результатов.');
+  return { service, query, page };
+}
+export function searchArgs({ service, query, page, details }) {
+  if (details)
+    return [
+      '--ignore-config',
+      '--skip-download',
+      '--dump-single-json',
+      '--no-playlist',
+      '--socket-timeout',
+      '12',
+      '--js-runtimes',
+      process.env.YOUMP3_NODE ? 'node:' + process.env.YOUMP3_NODE : 'node',
+      '--',
+      'https://www.youtube.com/watch?v=' + query,
+    ];
+  const size = service === 'soundcloud' ? 6 : 10;
+  return [
+    '--plugin-dirs',
+    process.env.YOUMP3_SEARCH_PLUGINS ||
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../search-plugins'),
+    '--ignore-config',
+    '--flat-playlist',
+    '--dump-single-json',
+    '--no-warnings',
+    '--socket-timeout',
+    service === 'soundcloud' ? '3' : '12',
+    '--retries',
+    '0',
+    '--extractor-retries',
+    '1',
+    '--playlist-start',
+    String((page - 1) * size + 1),
+    '--playlist-end',
+    String(page * size),
+    '--',
+    (service === 'youtube' ? 'ytsearch' : 'scsearch') + page * size + ':' + query,
+  ];
+}
+export function normalizeResults(data, service) {
+  const seen = new Set(),
+    items = [];
+  for (const e of data.entries || []) {
+    try {
+      let candidate =
+        service === 'youtube' ? `https://www.youtube.com/watch?v=${e.id}` : e.webpage_url || e.url;
+      const url = validate({ url: candidate, service, format: 'mp3', quality: '192' }).url;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      const images = [...(e.thumbnails || [])].reverse().map((t) => t.url);
+      if (e.thumbnail) images.unshift(e.thumbnail);
+      const thumbnail =
+        images.find((s) => {
+          try {
+            const u = new URL(s);
+            return (
+              u.protocol === 'https:' &&
+              ['ytimg.com', 'sndcdn.com'].some(
+                (d) => u.hostname === d || u.hostname.endsWith('.' + d),
+              )
+            );
+          } catch {
+            return false;
+          }
+        }) || null;
+      items.push({
+        id: String(e.id),
+        service,
+        url,
+        title: String(e.title || 'Без названия').slice(0, 300),
+        artist: String(e.artist || e.uploader || e.channel || '').slice(0, 160),
+        duration: Number.isFinite(e.duration) ? e.duration : null,
+        views: Number.isFinite(e.view_count) ? e.view_count : null,
+        thumbnail,
+        description: String(e.description || '').slice(0, 60000),
+      });
+    } catch {}
+  }
+  return items.slice(0, 10);
+}
+export function startSearch(binary, options, children) {
+  let process;
+  const promise = new Promise((resolve, reject) => {
+    let text = '',
+      error = '',
+      settled = false;
+    const finish = (err, data) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve(data);
+    };
+    process = spawn(binary, searchArgs(options), { windowsHide: true, shell: false });
+    children.add(process);
+    const timer = setTimeout(() => {
+      terminateProcess(process);
+      finish(new Error('Поиск занял слишком много времени. Попробуйте ещё раз.'));
+    }, 60000);
+    process.stdout.on('data', (b) => {
+      text += b;
+      if (text.length > 8 * 1024 * 1024) {
+        terminateProcess(process);
+        finish(new Error('Слишком большой ответ поиска.'));
+      }
+    });
+    process.stderr.on('data', (b) => (error = (error + b).slice(-1500)));
+    process.on('error', (e) => finish(e));
+    process.on('close', (code) => {
+      children.delete(process);
+      if (code !== 0) return finish(new Error(error || 'Поиск недоступен. Попробуйте позже.'));
+      try {
+        finish(
+          null,
+          options.details
+            ? {
+                description: String(JSON.parse(text).description || 'Описание отсутствует.').slice(
+                  0,
+                  60000,
+                ),
+              }
+            : normalizeResults(JSON.parse(text), options.service),
+        );
+      } catch {
+        finish(new Error('Не удалось прочитать результаты.'));
+      }
+    });
+  });
+  return { promise, cancel: () => terminateProcess(process) };
+}

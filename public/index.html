@@ -1,31 +1,470 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b0b0b"><title>YouMP3</title><link rel="icon" href="/logo.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"></head>
-<body data-service="youtube" class="studio-shell has-player">
-<header class="titlebar"><a class="brand" href="/" aria-label="YouMP3 — главная"><img src="/logo.svg" alt=""><span>YouMP3</span></a></header>
-<div class="app-shell">
-<aside class="sidebar"><nav aria-label="Основные разделы">
-<button data-page="discover"><span data-icon="search"></span><span>Поиск</span></button>
-<button data-page="download" class="active"><span data-icon="download"></span><span>Скачать</span></button>
-<button data-page="library"><span data-icon="library"></span><span>Библиотека</span><span id="count">0</span></button>
-<button data-page="favorites"><span data-icon="heart"></span><span>Избранное</span></button>
-<span class="nav-divider"></span><button data-page="games"><span data-icon="coffee"></span><span>Перерыв</span></button>
-</nav><div class="sidebar-bottom"><span id="engine" role="status">Подключение…</span><button data-page="settings"><span data-icon="settings"></span><span>Настройки</span><span id="update-dot" hidden aria-label="Доступно обновление"></span></button></div></aside>
-<main id="workspace">
-<section id="download-page">
-<div class="page-heading"><div><h1>Скачать аудио</h1><p id="tagline">По ссылке. В вашу библиотеку.</p></div></div>
-<section class="converter"><div class="source-tabs" role="tablist" aria-label="Источник"><button role="tab" data-service="youtube" class="active"><span class="source-symbol youtube">▶</span>YouTube</button><button role="tab" data-service="soundcloud"><span class="source-symbol soundcloud">☁</span>SoundCloud</button></div>
-<h2 id="headline" class="sr-only">Звук из YouTube</h2>
-<form id="convert"><label for="url" id="source-label">Ссылка на видео</label><div class="url-box"><textarea id="url" rows="3" required aria-label="Ссылки на аудио"></textarea><button type="button" id="paste"><span data-icon="clipboard"></span>Вставить</button></div>
-<div class="options"><fieldset><legend>Формат</legend><div id="formats" class="format-buttons"></div></fieldset><div class="quality"><label for="quality">Качество</label><select id="quality"></select></div></div><div class="converter-bottom"><span class="hint">Несколько ссылок — по одной на строку</span><button class="primary" id="submit">В очередь</button></div><p id="message" role="status"></p><div id="duplicates"></div></form></section>
-<div class="section-heading"><h2>Последние загрузки</h2><button id="all" class="text-button">Вся библиотека <span data-icon="arrow"></span></button></div><div id="recent" class="recent-list"></div></section>
-<section id="library-page" hidden><div class="page-heading"><div class="heading-inline"><h1 id="library-title">Библиотека</h1><span id="library-total"></span></div><label class="primary import-button" for="import"><span data-icon="plus"></span>Добавить аудио</label><input type="file" id="import" accept=".mp3,.wav,.flac,.m4a,.opus,.ogg" hidden></div>
-<div class="library-tools"><div class="search-field"><span data-icon="search"></span><input id="search" type="search" placeholder="Найти трек…" aria-label="Поиск в библиотеке"></div><div id="library-sources" class="filter-chips"><button data-filter="" class="active">Все</button><button data-filter="youtube"><span class="source-symbol youtube">▶</span>YouTube</button><button data-filter="soundcloud"><span class="source-symbol soundcloud">☁</span>SoundCloud</button><details class="track-menu filter-extra"><summary class="icon-button" aria-label="Другие источники" title="Другие источники"><span data-icon="more"></span></summary><div class="track-menu-content"><button type="button" data-filter="import">Мои файлы</button><button type="button" data-filter="archive">Архив</button></div></details></div><select id="sort" aria-label="Сортировка"><option value="new">Сначала новые</option><option value="old">Сначала старые</option><option value="title">По названию</option></select><select id="filter" hidden aria-label="Источник"><option value="">Все</option><option value="youtube">YouTube</option><option value="soundcloud">SoundCloud</option><option value="import">Мои файлы</option><option value="archive">Архив</option></select><input id="favorites" type="checkbox" hidden></div><p id="library-message" role="status"></p><div id="jobs" class="album-grid"></div></section>
-<section id="settings-page" hidden><div class="page-heading"><h1>Настройки</h1><span class="version-badge">v1.8.0</span></div><div class="settings-card"><section><div class="settings-section-icon" data-icon="refresh"></div><h2>Обновления</h2><p id="update-status" role="status"></p><button id="update-action">Проверить обновления</button></section><section><div class="settings-section-icon" data-icon="folder"></div><h2>Папка сохранения</h2><p id="folder-path"></p><button id="choose-folder">Выбрать папку</button><p class="hint">Новые треки и фрагменты сохраняются сюда автоматически.</p></section><section><h2>Оформление файлов</h2><label class="toggle-row"><span>Записывать метаданные<small>Название, исполнитель и альбом</small></span><input type="checkbox" id="metadata-setting" role="switch"></label><label class="toggle-row"><span>Встраивать обложку<small>Если источник предоставляет изображение</small></span><input type="checkbox" id="cover-setting" role="switch"></label><p id="settings-message" role="status"></p></section></div></section>
-<section id="discover-page" hidden><div class="page-heading"><h1>Поиск</h1><span class="muted">Найдите свой следующий трек</span></div><form id="discover-form"><div class="url-box search-online"><span data-icon="search"></span><input id="discover-query" type="search" required minlength="2" maxlength="200" placeholder="Исполнитель, трек или type beat…" aria-label="Поиск музыки онлайн"><button id="discover-submit" class="primary">Найти</button></div></form>
-<div class="search-toolbar"><div class="discovery-tabs" role="tablist" aria-label="Сервис поиска"><button type="button" role="tab" data-discover="youtube" aria-selected="true" class="active"><span class="source-symbol youtube">▶</span>YouTube</button><button type="button" role="tab" data-discover="soundcloud" aria-selected="false"><span class="source-symbol soundcloud">☁</span>SoundCloud</button></div><div class="discover-quality"><select id="discover-format" aria-label="Формат скачивания"></select><select id="discover-quality" aria-label="Качество аудио"></select></div></div>
-<div class="discover-status"><span id="discover-message" role="status" aria-live="polite"></span><button id="discover-cancel" type="button" hidden>Отменить</button></div>
-<section id="online-player" hidden aria-label="Онлайн-плеер"><div class="online-heading"><strong id="online-title"></strong><button type="button" id="online-close" class="icon-button" aria-label="Закрыть онлайн-плеер"><span data-icon="close"></span></button></div><div id="online-frame"></div><div class="online-bottom"><div id="online-description"></div><div class="online-actions"><button id="online-download" class="primary">В очередь</button><button id="online-original" class="icon-button" aria-label="Открыть оригинал" title="Открыть оригинал"><span data-icon="external"></span></button></div></div></section>
-<div id="discover-results"><div class="search-welcome"><span class="welcome-mark"><img src="/logo.svg" alt=""></span><h2>С чего начнём?</h2><p>Название трека, любимый артист или просто «type beat».</p></div></div><button id="discover-more" hidden type="button">Показать ещё</button></section><section id="games-page" hidden><div class="intro games-heading"><div><span class="eyebrow">МИНУТА ДЛЯ СЕБЯ</span><h1>Перерыв.</h1><p>16 игр · офлайн · рекорды и сохранения</p></div><div><button id="game-resume">Продолжить последнюю игру →</button><label><input id="game-sound" type="checkbox"> Звук игр</label></div></div><div id="game-menu" class="game-menu"></div><section id="game-playroom" hidden><div class="game-toolbar"><button id="game-home">← Все игры</button><h2 id="game-name"></h2><span id="game-record"></span><button id="game-pause">Ⅱ Пауза</button><button id="game-restart">Заново</button></div><p id="game-status" class="game-status" role="status"></p><div id="game-board" class="game-board"></div><div id="game-controls" class="game-controls"></div></section><div id="game-toast" class="game-toast" role="status" hidden></div></section></main><aside id="context-panel" aria-label="Панель трека и очередь"><section id="track-inspector" hidden></section><section id="queue-panel"><div class="panel-heading"><h2>Очередь</h2><span id="queue-count">0</span></div><div id="queue"></div></section></aside></div><dialog id="metadata-dialog"><form id="metadata-form"><h2>Метаданные файла</h2><label>Название<input id="meta-title" required maxlength="200"></label><label>Исполнитель<input id="meta-artist" maxlength="160"></label><label>Альбом<input id="meta-album" maxlength="200"></label><label>Своя обложка<input id="meta-art" type="file" accept="image/jpeg,image/png,image/webp"></label><label><input id="meta-remove" type="checkbox"> Удалить обложку</label><p class="hint">Запись тегов создаёт новую версию аудио. Ранее экспортированные копии не изменяются. Обложки: MP3, M4A, FLAC.</p><p id="meta-message" role="status"></p><div class="dialog-actions"><button type="button" id="meta-close">Отмена</button><button id="meta-save">Записать в файл</button></div></form></dialog><dialog id="correction-dialog"><form id="correction-form"><h2>Подтверждённые BPM и тональность</h2><label>BPM<input id="correct-bpm" type="number" min="20" max="400" step=".01" required></label><div><button type="button" id="bpm-half">÷2</button><button type="button" id="bpm-double">×2</button></div><label>Нота<select id="correct-key"></select></label><label>Лад<select id="correct-scale"><option value="minor">Minor / минор</option><option value="major">Major / мажор</option></select></label><p class="hint">Сохраняется отдельно от анализа алгоритма. Ручной ввод сам по себе не проверяет точность.</p><p id="correct-message" role="status"></p><div class="dialog-actions"><button type="button" id="correct-close">Отмена</button><button type="button" id="correct-reset">Вернуть оценку</button><button>Подтвердить</button></div></form></dialog>
-<dialog id="edit-dialog"><form id="edit-form"><h2>Теги</h2><label for="tags-input">Через запятую</label><input id="tags-input" maxlength="500" placeholder="биты, для записи, семплы"><div class="dialog-actions"><button type="button" data-close="edit-dialog">Отмена</button><button class="primary">Сохранить</button></div></form></dialog>
-<dialog id="trim-dialog"><form id="trim-form"><h2>Сохранить фрагмент</h2><p id="trim-title"></p><div class="trim-timeline-toolbar"><span id="trim-selection-length">Выделите фрагмент</span><label>Масштаб <select id="trim-zoom"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label><span id="trim-time">0:00</span></div><div id="trim-viewport"><div id="trim-track"><canvas id="trim-canvas"></canvas><div class="trim-shade" id="trim-shade-left"></div><div class="trim-shade" id="trim-shade-right"></div><div id="trim-selection"></div><button type="button" role="slider" class="trim-handle" id="trim-left" aria-label="Начало выделения"></button><button type="button" role="slider" class="trim-handle" id="trim-right" aria-label="Конец выделения"></button><div id="trim-position"></div></div></div><p id="trim-wave-status"></p><div class="trim-transport"><button type="button" id="trim-play">▶ Слушать</button><label><input type="checkbox" id="trim-loop"> Повтор выделения</label></div><audio id="trim-audio" preload="metadata"></audio><div class="trim-fields"><label>Начало, сек<input id="trim-start" type="number" min="0" step="0.1" required></label><label>Конец, сек<input id="trim-end" type="number" min="0.1" step="0.1" required></label></div><div class="trim-marks"><button type="button" id="mark-start">Начало = курсор</button><button type="button" id="mark-end">Конец = курсор</button><button type="button" id="preview-trim">▶ Прослушать выделение</button></div><p class="hint">Исходник останется в библиотеке. Фрагмент будет перекодирован в выбранном ранее качестве.</p><p id="trim-message" role="status"></p><div class="dialog-actions"><button type="button" data-close="trim-dialog">Отмена</button><button class="primary">Создать фрагмент</button></div></form></dialog>
-<aside id="player" aria-label="Аудиоплеер"><div class="player-track"><div id="player-art">♫</div><div><strong id="player-title">Выберите трек</strong><small id="player-artist"></small></div><button id="player-favorite" aria-label="В избранное">♡</button></div><div class="player-center"><div class="transport"><button id="previous" aria-label="Предыдущий трек">⏮</button><button id="back10" aria-label="Назад на 10 секунд">−10</button><button id="play-pause" aria-label="Воспроизвести">▶</button><button id="forward10" aria-label="Вперёд на 10 секунд">+10</button><button id="next" aria-label="Следующий трек">⏭</button></div><div class="timeline"><span id="elapsed">0:00</span><input id="seek" type="range" min="0" max="100" value="0" step="0.1" aria-label="Позиция воспроизведения"><span id="duration">0:00</span></div></div><div class="player-volume"><button id="mute" aria-label="Выключить звук">♪</button><input id="volume" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Громкость"><button id="player-trim">Обрезать</button></div><audio id="audio" preload="metadata"></audio></aside><div id="toast" role="status" hidden></div><script src="/app.js" type="module"></script></body></html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#0b0b0b" />
+    <title>YouMP3</title>
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/workspace.css" />
+    <link rel="stylesheet" href="/games.css" />
+  </head>
+  <body data-service="youtube" class="studio-shell has-player">
+    <header class="titlebar">
+      <a class="brand" href="/" aria-label="YouMP3 — главная"
+        ><img src="/logo.svg" alt="" /><span>YouMP3</span></a
+      >
+    </header>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <nav aria-label="Основные разделы">
+          <button data-page="discover"><span data-icon="search"></span><span>Поиск</span></button>
+          <button data-page="download" class="active">
+            <span data-icon="download"></span><span>Скачать</span>
+          </button>
+          <button data-page="library">
+            <span data-icon="library"></span><span>Библиотека</span><span id="count">0</span>
+          </button>
+          <button data-page="favorites">
+            <span data-icon="heart"></span><span>Избранное</span>
+          </button>
+          <span class="nav-divider"></span
+          ><button data-page="games"><span data-icon="coffee"></span><span>Перерыв</span></button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span id="engine" role="status">Подключение…</span
+          ><button data-page="settings">
+            <span data-icon="settings"></span><span>Настройки</span
+            ><span id="update-dot" hidden aria-label="Доступно обновление"></span>
+          </button>
+        </div>
+      </aside>
+      <main id="workspace">
+        <section id="download-page">
+          <div class="page-heading">
+            <div>
+              <h1>Скачать аудио</h1>
+              <p id="tagline">По ссылке. В вашу библиотеку.</p>
+            </div>
+          </div>
+          <section class="converter">
+            <div class="source-tabs" role="tablist" aria-label="Источник">
+              <button role="tab" data-service="youtube" class="active">
+                <span class="source-symbol youtube">▶</span>YouTube</button
+              ><button role="tab" data-service="soundcloud">
+                <span class="source-symbol soundcloud">☁</span>SoundCloud
+              </button>
+            </div>
+            <h2 id="headline" class="sr-only">Звук из YouTube</h2>
+            <form id="convert">
+              <label for="url" id="source-label">Ссылка на видео</label>
+              <div class="url-box">
+                <textarea id="url" rows="1" required aria-label="Ссылки на аудио"></textarea
+                ><button type="button" id="paste">
+                  <span data-icon="clipboard"></span>Вставить
+                </button>
+              </div>
+              <div class="options">
+                <fieldset>
+                  <legend>Формат</legend>
+                  <div id="formats" class="format-buttons"></div>
+                </fieldset>
+                <div class="quality">
+                  <label for="quality">Качество</label
+                  ><select id="quality"></select>
+                </div>
+              </div>
+              <div class="converter-bottom">
+                <span class="hint">Несколько ссылок — по одной на строку</span
+                ><button class="primary" id="submit">В очередь</button>
+              </div>
+              <p id="message" role="status"></p>
+              <div id="duplicates"></div>
+            </form>
+          </section>
+          <div class="section-heading">
+            <h2>Последние загрузки</h2>
+            <button id="all" class="text-button">
+              Вся библиотека <span data-icon="arrow"></span>
+            </button>
+          </div>
+          <div id="recent" class="recent-list"></div>
+        </section>
+        <section id="library-page" hidden>
+          <div class="page-heading">
+            <div class="heading-inline">
+              <h1 id="library-title">Библиотека</h1>
+              <span id="library-total"></span>
+            </div>
+            <label class="primary import-button" for="import"
+              ><span data-icon="plus"></span>Добавить аудио</label
+            ><input type="file" id="import" accept=".mp3,.wav,.flac,.m4a,.opus,.ogg" hidden />
+          </div>
+          <div class="library-tools">
+            <div class="search-field">
+              <span data-icon="search"></span
+              ><input
+                id="search"
+                type="search"
+                placeholder="Найти трек…"
+                aria-label="Поиск в библиотеке"
+              />
+            </div>
+            <div id="library-sources" class="filter-chips">
+              <button data-filter="" class="active">Все</button
+              ><button data-filter="youtube">
+                <span class="source-symbol youtube">▶</span>YouTube</button
+              ><button data-filter="soundcloud">
+                <span class="source-symbol soundcloud">☁</span>SoundCloud
+              </button>
+              <details class="track-menu filter-extra">
+                <summary class="icon-button" aria-label="Другие источники" title="Другие источники">
+                  <span data-icon="more"></span>
+                </summary>
+                <div class="track-menu-content">
+                  <button type="button" data-filter="import">Мои файлы</button
+                  ><button type="button" data-filter="archive">Архив</button>
+                </div>
+              </details>
+            </div>
+            <select id="sort" aria-label="Сортировка">
+              <option value="new">Сначала новые</option>
+              <option value="old">Сначала старые</option>
+              <option value="title">По названию</option></select
+            ><select id="filter" hidden aria-label="Источник">
+              <option value="">Все</option>
+              <option value="youtube">YouTube</option>
+              <option value="soundcloud">SoundCloud</option>
+              <option value="import">Мои файлы</option>
+              <option value="archive">Архив</option></select
+            ><input id="favorites" type="checkbox" hidden />
+          </div>
+          <p id="library-message" role="status"></p>
+          <div id="jobs" class="album-grid"></div>
+        </section>
+        <section id="settings-page" hidden>
+          <div class="page-heading">
+            <h1>Настройки</h1>
+            <span class="version-badge">v1.0.0</span>
+          </div>
+          <div class="settings-card">
+            <section>
+              <div class="settings-section-icon" data-icon="refresh"></div>
+              <h2>Обновления</h2>
+              <p id="update-status" role="status"></p>
+              <button id="update-action">Проверить обновления</button>
+            </section>
+            <section>
+              <div class="settings-section-icon" data-icon="folder"></div>
+              <h2>Папка сохранения</h2>
+              <p id="folder-path"></p>
+              <button id="choose-folder">Выбрать папку</button>
+              <p class="hint">Новые треки и фрагменты сохраняются сюда автоматически.</p>
+            </section>
+            <section>
+              <h2>Оформление файлов</h2>
+              <label class="toggle-row"
+                ><span>Записывать метаданные<small>Название, исполнитель и альбом</small></span
+                ><input type="checkbox" id="metadata-setting" role="switch" /></label
+              ><label class="toggle-row"
+                ><span
+                  >Встраивать обложку<small>Если источник предоставляет изображение</small></span
+                ><input type="checkbox" id="cover-setting" role="switch"
+              /></label>
+              <p id="settings-message" role="status"></p>
+            </section>
+          </div>
+        </section>
+        <section id="discover-page" hidden>
+          <div class="page-heading">
+            <h1>Поиск</h1>
+            <span class="muted">Найдите свой следующий трек</span>
+          </div>
+          <form id="discover-form">
+            <div class="url-box search-online">
+              <span data-icon="search"></span
+              ><input
+                id="discover-query"
+                type="search"
+                required
+                minlength="2"
+                maxlength="200"
+                placeholder="Исполнитель, трек или type beat…"
+                aria-label="Поиск музыки онлайн"
+              /><button id="discover-submit" class="primary">Найти</button>
+            </div>
+          </form>
+          <div class="search-toolbar">
+            <div class="discovery-tabs" role="tablist" aria-label="Сервис поиска">
+              <button
+                type="button"
+                role="tab"
+                data-discover="youtube"
+                aria-selected="true"
+                class="active"
+              >
+                <span class="source-symbol youtube">▶</span>YouTube</button
+              ><button type="button" role="tab" data-discover="soundcloud" aria-selected="false">
+                <span class="source-symbol soundcloud">☁</span>SoundCloud
+              </button>
+            </div>
+            <div class="discover-quality">
+              <select id="discover-format" aria-label="Формат скачивания"></select
+              ><select id="discover-quality" aria-label="Качество аудио"></select>
+            </div>
+          </div>
+          <div class="discover-status">
+            <span id="discover-message" role="status" aria-live="polite"></span
+            ><button id="discover-cancel" type="button" hidden>Отменить</button>
+          </div>
+          <section id="online-player" hidden aria-label="Онлайн-плеер">
+            <div class="online-heading">
+              <strong id="online-title"></strong
+              ><button
+                type="button"
+                id="online-close"
+                class="icon-button"
+                aria-label="Закрыть онлайн-плеер"
+              >
+                <span data-icon="close"></span>
+              </button>
+            </div>
+            <div id="online-frame"></div>
+            <div class="online-bottom">
+              <div id="online-description"></div>
+              <div class="online-actions">
+                <button id="online-download" class="primary">В очередь</button
+                ><button
+                  id="online-original"
+                  class="icon-button"
+                  aria-label="Открыть оригинал"
+                  title="Открыть оригинал"
+                >
+                  <span data-icon="external"></span>
+                </button>
+              </div>
+            </div>
+          </section>
+          <div id="discover-results">
+            <div class="search-welcome">
+              <span class="welcome-mark"><img src="/logo.svg" alt="" /></span>
+              <h2>С чего начнём?</h2>
+              <p>Название трека, любимый артист или просто «type beat».</p>
+            </div>
+          </div>
+          <button id="discover-more" hidden type="button">Показать ещё</button>
+        </section>
+        <section id="games-page" hidden>
+          <div class="intro games-heading">
+            <div>
+              <span class="eyebrow">МИНУТА ДЛЯ СЕБЯ</span>
+              <h1>Перерыв.</h1>
+              <p>4 игры · рекорды · сохранение прогресса</p>
+            </div>
+            <div>
+              <button id="game-resume">Продолжить последнюю игру →</button
+              ><label><input id="game-sound" type="checkbox" /> Звуки эффектов</label>
+            </div>
+          </div>
+          <div id="game-menu" class="game-menu"></div>
+          <section id="game-playroom" hidden>
+            <div class="game-toolbar">
+              <button id="game-home">← Все игры</button>
+              <h2 id="game-name"></h2>
+              <span id="game-record"></span><button id="game-pause">Ⅱ Пауза</button
+              ><button id="game-restart">Заново</button>
+            </div>
+            <p id="game-status" class="game-status" role="status"></p>
+            <div id="game-board" class="game-board"></div>
+            <div id="game-controls" class="game-controls"></div>
+          </section>
+          <div id="game-toast" class="game-toast" role="status" hidden></div>
+        </section>
+      </main>
+      <aside id="context-panel" aria-label="Панель трека и очередь">
+        <section id="track-inspector" hidden></section>
+        <section id="queue-panel">
+          <div class="panel-heading">
+            <h2>Очередь</h2>
+            <span id="queue-count">0</span>
+          </div>
+          <div id="queue"></div>
+        </section>
+      </aside>
+    </div>
+    <dialog id="metadata-dialog">
+      <form id="metadata-form">
+        <h2>Метаданные файла</h2>
+        <label>Название<input id="meta-title" required maxlength="200" /></label
+        ><label>Исполнитель<input id="meta-artist" maxlength="160" /></label
+        ><label>Альбом<input id="meta-album" maxlength="200" /></label
+        ><label
+          >Своя обложка<input
+            id="meta-art"
+            type="file"
+            accept="image/jpeg,image/png,image/webp" /></label
+        ><label><input id="meta-remove" type="checkbox" /> Удалить обложку</label>
+        <p class="hint">
+          Запись тегов создаёт новую версию аудио. Ранее экспортированные копии не изменяются.
+          Обложки: MP3, M4A, FLAC.
+        </p>
+        <p id="meta-message" role="status"></p>
+        <div class="dialog-actions">
+          <button type="button" id="meta-close">Отмена</button
+          ><button id="meta-save">Записать в файл</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="correction-dialog">
+      <form id="correction-form">
+        <h2>Подтверждённые BPM и тональность</h2>
+        <label
+          >BPM<input id="correct-bpm" type="number" min="20" max="400" step=".01" required
+        /></label>
+        <div>
+          <button type="button" id="bpm-half">÷2</button
+          ><button type="button" id="bpm-double">×2</button>
+        </div>
+        <label>Нота<select id="correct-key"></select></label
+        ><label
+          >Лад<select id="correct-scale">
+            <option value="minor">Minor / минор</option>
+            <option value="major">Major / мажор</option>
+          </select></label
+        >
+        <p class="hint">
+          Сохраняется отдельно от анализа алгоритма. Ручной ввод сам по себе не проверяет точность.
+        </p>
+        <p id="correct-message" role="status"></p>
+        <div class="dialog-actions">
+          <button type="button" id="correct-close">Отмена</button
+          ><button type="button" id="correct-reset">Вернуть оценку</button
+          ><button>Подтвердить</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="edit-dialog">
+      <form id="edit-form">
+        <h2>Теги</h2>
+        <label for="tags-input">Через запятую</label
+        ><input id="tags-input" maxlength="500" placeholder="биты, для записи, семплы" />
+        <div class="dialog-actions">
+          <button type="button" data-close="edit-dialog">Отмена</button
+          ><button class="primary">Сохранить</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="trim-dialog">
+      <form id="trim-form">
+        <h2>Сохранить фрагмент</h2>
+        <p id="trim-title"></p>
+        <div class="trim-timeline-toolbar">
+          <span id="trim-selection-length">Выделите фрагмент</span
+          ><label
+            >Масштаб
+            <select id="trim-zoom">
+              <option value="1">1×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select></label
+          ><span id="trim-time">0:00</span>
+        </div>
+        <div id="trim-viewport">
+          <div id="trim-track">
+            <canvas id="trim-canvas"></canvas>
+            <div class="trim-shade" id="trim-shade-left"></div>
+            <div class="trim-shade" id="trim-shade-right"></div>
+            <div id="trim-selection"></div>
+            <button
+              type="button"
+              role="slider"
+              class="trim-handle"
+              id="trim-left"
+              aria-label="Начало выделения"
+            ></button
+            ><button
+              type="button"
+              role="slider"
+              class="trim-handle"
+              id="trim-right"
+              aria-label="Конец выделения"
+            ></button>
+            <div id="trim-position"></div>
+          </div>
+        </div>
+        <p id="trim-wave-status"></p>
+        <div class="trim-transport">
+          <button type="button" id="trim-play">▶ Слушать</button
+          ><label><input type="checkbox" id="trim-loop" /> Повтор выделения</label>
+        </div>
+        <audio id="trim-audio" preload="metadata"></audio>
+        <div class="trim-fields">
+          <label
+            >Начало, сек<input id="trim-start" type="number" min="0" step="0.1" required /></label
+          ><label
+            >Конец, сек<input id="trim-end" type="number" min="0.1" step="0.1" required
+          /></label>
+        </div>
+        <div class="trim-marks">
+          <button type="button" id="mark-start">Начало = курсор</button
+          ><button type="button" id="mark-end">Конец = курсор</button
+          ><button type="button" id="preview-trim">▶ Прослушать выделение</button>
+        </div>
+        <p class="hint">
+          Исходник останется в библиотеке. Фрагмент будет перекодирован в выбранном ранее качестве.
+        </p>
+        <p id="trim-message" role="status"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close="trim-dialog">Отмена</button
+          ><button class="primary">Создать фрагмент</button>
+        </div>
+      </form>
+    </dialog>
+    <aside id="player" aria-label="Аудиоплеер">
+      <div class="player-track">
+        <div id="player-art">♫</div>
+        <div>
+          <strong id="player-title">Выберите трек</strong><small id="player-artist"></small>
+        </div>
+        <button id="player-favorite" aria-label="В избранное">♡</button>
+      </div>
+      <div class="player-center">
+        <div class="transport">
+          <button id="previous" aria-label="Предыдущий трек">⏮</button
+          ><button id="back10" aria-label="Назад на 10 секунд">−10</button
+          ><button id="play-pause" aria-label="Воспроизвести">▶</button
+          ><button id="forward10" aria-label="Вперёд на 10 секунд">+10</button
+          ><button id="next" aria-label="Следующий трек">⏭</button>
+        </div>
+        <div class="timeline">
+          <span id="elapsed">0:00</span
+          ><input
+            id="seek"
+            type="range"
+            min="0"
+            max="100"
+            value="0"
+            step="0.1"
+            aria-label="Позиция воспроизведения"
+          /><span id="duration">0:00</span>
+        </div>
+      </div>
+      <div class="player-volume">
+        <button id="mute" aria-label="Выключить звук">♪</button
+        ><input
+          id="volume"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.8"
+          aria-label="Громкость"
+        /><button id="player-trim">Обрезать</button>
+      </div>
+      <audio id="audio" preload="metadata"></audio>
+    </aside>
+    <div id="toast" role="status" hidden></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

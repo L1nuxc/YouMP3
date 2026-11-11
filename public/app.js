@@ -1,220 +1,2368 @@
-import {resolvedMusic,descriptionMusic} from '/description-music.mjs';
-import {initGames} from '/games.js';
-const $=s=>document.querySelector(s);
-const formats={mp3:['128','192','256','320'],wav:['16','24'],flac:['16','24'],m4a:['128','192','256'],opus:['96','128','192']};let selected='mp3',service='youtube',ready=false,jobs=[],signature='';
-function page(name){$('#games-page').hidden=name!=='games';$('#download-page').hidden=name!=='download';$('#library-page').hidden=name!=='library';$('#settings-page').hidden=name!=='settings';$('#discover-page').hidden=name!=='discover';if(name!=='discover')closeOnline();document.body.dataset.service=name==='discover'?discoverService:service;for(const b of document.querySelectorAll('button[data-page]'))b.classList.toggle('active',b.dataset.page===name);}
-for(const b of document.querySelectorAll('button[data-page]'))b.onclick=()=>page(b.dataset.page);$('#all').onclick=()=>page('library');
-function source(value){service=value;document.body.dataset.service=value;const sc=value==='soundcloud';$('#headline').textContent=sc?'Треки из SoundCloud.':'Звук из YouTube.';$('#tagline').textContent=sc?'Сохраните любимый трек в нужном формате.':'Видео, Shorts и записи эфиров — в вашу библиотеку.';$('#source-label').textContent=sc?'Ссылка на трек':'Ссылка на видео';$('#url').placeholder=sc?'https://soundcloud.com/artist/track':'https://www.youtube.com/watch?v=…';$('#url').value='';$('#message').textContent='';for(const b of document.querySelectorAll('button[data-service]')){b.classList.toggle('active',b.dataset.service===value);b.setAttribute('aria-selected',String(b.dataset.service===value));}}
-for(const b of document.querySelectorAll('button[data-service]')){b.onclick=()=>source(b.dataset.service);b.onkeydown=e=>{if(e.key==='ArrowRight'||e.key==='ArrowLeft'){source(service==='youtube'?'soundcloud':'youtube');document.querySelector(`button[data-service="${service}"]`).focus();}};}source(service);
-function choose(f){selected=f;$('#formats').replaceChildren();for(const key of Object.keys(formats)){const b=document.createElement('button');b.type='button';b.textContent=key.toUpperCase();b.className=key===f?'active':'';b.setAttribute('aria-pressed',String(key===f));b.onclick=()=>choose(key);$('#formats').append(b);}$('#quality').replaceChildren(...formats[f].map(v=>new Option(v+(['wav','flac'].includes(f)?' бит':' кбит/с'),v)));$('#quality').value=['wav','flac'].includes(f)?'16':formats[f].at(-1);}choose(selected);
-async function api(url,options){const res=await fetch(url,options),data=await res.json();if(!res.ok){const e=new Error(data.error||'Ошибка запроса');e.data=data;throw e;}return data;}
-function button(){$('#submit').disabled=!ready;$('#submit').textContent='Добавить в очередь ↓';}
-$('#paste').onclick=async()=>{try{$('#url').value=await (window.desktop?window.desktop.readClipboard():navigator.clipboard.readText());}catch{$('#message').textContent='Вставьте ссылку через Ctrl+V.';}$('#url').focus();};
-async function enqueue(url,force=false){return api('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,service,format:selected,quality:$('#quality').value,force})});}
-$('#convert').onsubmit=async e=>{e.preventDefault();$('#submit').disabled=true;$('#duplicates').replaceChildren();const links=$('#url').value.split(/\s+/).filter(Boolean);let count=0;for(const url of links){try{await enqueue(url);count++;}catch(error){if(error.data?.duplicateId){const box=el('div',undefined,'duplicate');box.append(el('span','Уже в библиотеке: '+url));const b=el('button','Скачать ещё раз');b.onclick=async()=>{b.disabled=true;try{await enqueue(url,true);box.remove();await refresh();}catch(e){$('#message').textContent=e.message;b.disabled=false;}};box.append(b);$('#duplicates').append(box);}else $('#message').textContent=error.message;}}if(count)$('#message').textContent='Добавлено в очередь: '+count;await refresh();button();};
-const names={youtube:'YouTube',soundcloud:'SoundCloud',import:'Мой файл',archive:'Архив'},statuses={queued:'Очередь',info:'Информация…',downloading:'Скачивание',converting:'Конвертация…',error:'Ошибка',done:'Готово',canceled:'Отменено'};
-function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;}
-function metric(value,label){const n=el('div',undefined,'metric');n.append(el('b',value),el('span',label));return n;}
-function row(j){const node=el('article',undefined,'job'),top=el('div',undefined,'job-top'),body=el('div',undefined,'job-body');const meta=el('p');meta.append(el('span',names[j.service]||'Архив','badge '+j.service),document.createTextNode(`${j.format.toUpperCase()} · ${new Date(j.created).toLocaleDateString('ru-RU')}${j.size?' · '+(j.size/1048576).toFixed(1)+' МБ':''} · ${statuses[j.status]}`));body.append(el('strong',j.title),meta);if(j.status==='error')body.append(el('p',j.error,'error'));if(!['done','error','canceled'].includes(j.status)){const p=el('progress');p.max=100;p.value=j.progress;body.append(p);}const actions=el('div',undefined,'job-actions');if(j.status==='done'){const a=el('a','Сохранить ↓','download-link');a.href='/api/files/'+j.id;a.download='';actions.append(a);const b=el('button',j.analysisStatus==='running'?'Анализ…':j.analysis?'Повторить анализ':'BPM / Тональность');b.disabled=j.analysisStatus==='running';b.onclick=async()=>{b.disabled=true;try{await api('/api/analyze/'+j.id,{method:'POST'});await refresh();}catch(e){$('#library-message').textContent=e.message;$('#message').textContent=e.message;b.disabled=false;}};actions.append(b);}if(j.url){const b=el('button','Ссылка');b.onclick=async()=>{try{await (window.desktop?window.desktop.writeClipboard(j.url):navigator.clipboard.writeText(j.url));b.textContent='Скопировано';}catch{page('download');source(j.service);$('#url').value=j.url;}};const retry=el('button','Загрузить ещё');retry.onclick=()=>{page('download');source(j.service);$('#url').value=j.url;};actions.append(b,retry);}top.append(body,actions);node.append(top);
- if(j.analysis){const a=j.analysis,area=el('div',undefined,'analysis');area.append(metric(a.bpm,'BPM · '+(a.bpmConfidence>=1.5?'ритм выражен':'ритм неуверенный')),metric(a.key+' '+(a.scale==='minor'?'minor':'major'),'Тональность · '+(a.scale==='minor'?'минор':'мажор')));const ru={C:'До','C#':'До♯',Db:'Ре♭',D:'Ре','D#':'Ре♯',Eb:'Ми♭',E:'Ми',F:'Фа','F#':'Фа♯',Gb:'Соль♭',G:'Соль','G#':'Соль♯',Ab:'Ля♭',A:'Ля','A#':'Ля♯',Bb:'Си♭',B:'Си'};area.append(el('small',`${ru[a.key]||a.key} ${a.scale==='minor'?'минор':'мажор'} · Уверенность: ${a.strength>.7?'высокая':a.strength>.45?'средняя':'низкая'} (оценка алгоритма). Анализ ${a.seconds} с.`));node.append(area);}if(j.analysisError)node.append(el('p',j.analysisError,'error'));return node;}
-function render(){const query=$('#search').value.toLowerCase(),filter=$('#filter').value;const list=jobs.filter(j=>(!filter||j.service===filter)&&(!$('#favorites').checked||j.favorite)&&(`${j.title} ${j.url||''} ${(j.tags||[]).join(' ')}`).toLowerCase().includes(query)).sort((a,b)=>b.created-a.created);$('#jobs').replaceChildren(...(list.length?list.map(row):[el('div','Пока ничего нет. Добавьте файл или скачайте аудио.','empty')]));const recent=[...jobs].sort((a,b)=>b.created-a.created).slice(0,3);$('#recent').replaceChildren(...(recent.length?recent.map(row):[el('div','Здесь появятся ваши загрузки.','empty')]));$('#count').textContent=jobs.length;renderQueue();}
-$('#search').oninput=render;$('#filter').onchange=render;
-$('#import').onchange=async()=>{const f=$('#import').files[0];if(!f)return;$('#library-message').textContent='Импорт…';try{if(f.size>200*1048576)throw new Error('Максимум 200 МБ.');await api('/api/import?name='+encodeURIComponent(f.name),{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});$('#library-message').textContent='';await refresh();}catch(e){$('#library-message').textContent=e.message;}$('#import').value='';};
-async function refresh(){try{const nextJobs=await api('/api/jobs');for(const j of nextJobs){if(j.status==='done'&&jobs.some(old=>old.id===j.id&&old.status!=='done'))window.dispatchEvent(new CustomEvent('yoump3-ready',{detail:j.title}));}jobs=nextJobs;button();const next=JSON.stringify(jobs);if(next!==signature){signature=next;render();}}catch{$('#message').textContent='Локальный сервер недоступен.';}}
-let playingId=null,trimId=null,editId=null,previewEnd=null;
-const audio=$('#audio');audio.volume=Number(localStorage.getItem('volume')||.8);$('#volume').value=audio.volume;
-const terminal=j=>['done','error','canceled'].includes(j.status);
-async function edit(id,data){await api('/api/edit/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});await refresh();}
-function playerInfo(j){$('#player-title').textContent=j.title;$('#player-artist').textContent=j.artist||names[j.service]||'';$('#player-favorite').textContent=j.favorite?'♥':'♡';$('#player-art').replaceChildren();if(j.cover){const image=el('img');image.src='/api/cover/'+j.id;image.alt='Обложка';$('#player-art').append(image);}else $('#player-art').textContent='♫';}
-async function playTrack(j){if(j.status!=='done')return;if(playingId!==j.id){playingId=j.id;previewEnd=null;audio.src='/api/stream/'+j.id;playerInfo(j);}$('#player').hidden=false;document.body.classList.add('has-player');try{await audio.play();}catch{$('#library-message').textContent='Не удалось воспроизвести этот формат. Сохраните файл и откройте во внешнем плеере.';}}
-function time(value){value=Number.isFinite(value)?Math.max(0,value):0;return Math.floor(value/60)+':'+String(Math.floor(value%60)).padStart(2,'0');}
-audio.onloadedmetadata=()=>{$('#duration').textContent=time(audio.duration);$('#seek').max=Number.isFinite(audio.duration)?audio.duration:100;};
-audio.ontimeupdate=()=>{$('#elapsed').textContent=time(audio.currentTime);$('#seek').value=audio.currentTime;if(previewEnd!==null&&audio.currentTime>=previewEnd){audio.pause();previewEnd=null;}};
-audio.onplay=()=>{$('#play-pause').textContent='Ⅱ';$('#play-pause').setAttribute('aria-label','Пауза');};audio.onpause=()=>{$('#play-pause').textContent='▶';$('#play-pause').setAttribute('aria-label','Воспроизвести');};
-audio.onerror=()=>{$('#library-message').textContent='Файл не найден или не поддерживается плеером.';};
-$('#seek').oninput=()=>{previewEnd=null;audio.currentTime=Number($('#seek').value);};
-$('#play-pause').onclick=()=>audio.paused?audio.play().catch(()=>{}):audio.pause();
-$('#back10').onclick=()=>audio.currentTime=Math.max(0,audio.currentTime-10);$('#forward10').onclick=()=>audio.currentTime=Math.min(audio.duration||0,audio.currentTime+10);
-$('#volume').oninput=()=>{audio.volume=Number($('#volume').value);audio.muted=false;localStorage.setItem('volume',audio.volume);$('#mute').textContent='♪';};$('#mute').onclick=()=>{audio.muted=!audio.muted;$('#mute').textContent=audio.muted?'×':'♪';};
-function adjacent(direction){const list=jobs.filter(j=>j.status==='done').sort((a,b)=>b.created-a.created),i=list.findIndex(j=>j.id===playingId),j=list[i+direction];if(j)playTrack(j);}
-$('#previous').onclick=()=>adjacent(-1);$('#next').onclick=()=>adjacent(1);audio.onended=()=>adjacent(1);
-$('#player-favorite').onclick=async()=>{const j=jobs.find(j=>j.id===playingId);if(j){await edit(j.id,{favorite:!j.favorite});playerInfo(jobs.find(j=>j.id===playingId));}};
-$('#player-trim').onclick=()=>{const j=jobs.find(j=>j.id===playingId);if(j)openTrim(j);};
-for(const edge of ['start','end'])$('#mark-'+edge).onclick=()=>{if(trimId!==playingId){$('#trim-message').textContent='Сначала включите этот трек в плеере.';return;}$('#trim-'+edge).value=audio.currentTime.toFixed(1);};
-$('#preview-trim').onclick=async()=>{const j=jobs.find(j=>j.id===trimId);if(!j)return;const start=Number($('#trim-start').value),end=Number($('#trim-end').value);if(end<=start){$('#trim-message').textContent='Конец должен быть после начала.';return;}await playTrack(j);if(audio.readyState<1)await new Promise(resolve=>audio.addEventListener('loadedmetadata',resolve,{once:true}));audio.currentTime=start;previewEnd=end;};
-$('#trim-form').onsubmit=async event=>{event.preventDefault();try{await api('/api/trim/'+trimId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start:Number($('#trim-start').value),end:Number($('#trim-end').value)})});$('#trim-dialog').close();await refresh();}catch(e){$('#trim-message').textContent=e.message;}};
-for(const b of document.querySelectorAll('[data-close]'))b.onclick=()=>{document.getElementById(b.dataset.close).close();previewEnd=null;};
-$('#edit-form').onsubmit=async event=>{event.preventDefault();try{await edit(editId,{tags:$('#tags-input').value.split(',')});$('#edit-dialog').close();}catch(e){$('#library-message').textContent=e.message;}};
-const baseRow=row;
-row=function(j){const node=baseRow(j),actions=node.querySelector('.job-actions');const favorite=el('button',j.favorite?'♥':'♡','favorite');favorite.setAttribute('aria-label',j.favorite?'Убрать из избранного':'В избранное');favorite.onclick=()=>edit(j.id,{favorite:!j.favorite}).catch(e=>$('#library-message').textContent=e.message);actions.prepend(favorite);
- if(j.status==='done'){const play=el('button','▶ Слушать','listen');play.onclick=()=>playTrack(j);actions.prepend(play);const trim=el('button','Обрезать');trim.onclick=()=>openTrim(j);const tags=el('button','# Теги');tags.onclick=()=>{editId=j.id;$('#tags-input').value=(j.tags||[]).join(', ');$('#edit-dialog').showModal();};actions.append(trim,tags);if(j.cover){const image=el('img',undefined,'track-cover');image.src='/api/cover/'+j.id;image.alt='';node.querySelector('.job-top').prepend(image);}}
- else if(!terminal(j)){const cancel=el('button','Отменить');cancel.onclick=async()=>{await api('/api/cancel/'+j.id,{method:'POST'});await refresh();};actions.append(cancel);}
- if(j.tags?.length){const tags=el('div',undefined,'tags');for(const tag of j.tags){const b=el('button','#'+tag);b.onclick=()=>{page('library');$('#search').value=tag;render();};tags.append(b);}node.append(tags);}if(j.exported)node.append(el('p','Сохранено: '+j.exported,'exported'));if(j.exportError)node.append(el('p',j.exportError,'error'));return node;};
-$('#favorites').onchange=render;
-function renderQueue(){const pending=jobs.filter(j=>!terminal(j));$('#queue').replaceChildren();if(!pending.length)return;$('#queue').append(el('h2','В очереди: '+pending.length));for(const j of pending){const line=el('div',undefined,'queue-item'),cancel=el('button','Отменить');cancel.onclick=async()=>{await api('/api/cancel/'+j.id,{method:'POST'});await refresh();};line.append(el('span',(j.title||j.url)+' · '+statuses[j.status]+(j.progress?' '+Math.round(j.progress)+'%':'')),cancel);$('#queue').append(line);}}
-async function loadSettings(){const s=await api('/api/settings');$('#metadata-setting').checked=s.metadata;$('#cover-setting').checked=s.cover;$('#folder-path').textContent=s.folder||'Папка не выбрана — используйте «Сохранить» у трека.';$('#choose-folder').disabled=!window.desktop;if(!window.desktop)$('#choose-folder').textContent='Выбор папки доступен в EXE';}
-for(const name of ['metadata','cover'])$('#'+name+'-setting').onchange=async()=>{try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[name]:$('#'+name+'-setting').checked})});$('#settings-message').textContent='Сохранено · применяется к новым задачам';}catch(e){$('#settings-message').textContent=e.message;}};
-$('#choose-folder').onclick=async()=>{try{await window.desktop.chooseFolder();await loadSettings();}catch(e){$('#settings-message').textContent=e.message;}};
+import './preferences.js';
+import { installWorkspace } from './workspace.js';
+import { createIcon } from './icons.js';
+import { resolvedMusic, descriptionMusic } from '/description-music.mjs';
+import { initGames } from '/games.js';
+const $ = (s) => document.querySelector(s);
+const formats = {
+  mp3: ['128', '192', '256', '320'],
+  wav: ['16', '24'],
+  flac: ['16', '24'],
+  m4a: ['128', '192', '256'],
+  opus: ['96', '128', '192'],
+};
+let selected = 'mp3',
+  service = 'youtube',
+  ready = false,
+  jobs = [],
+  signature = '';
+function page(name) {
+  $('#games-page').hidden = name !== 'games';
+  $('#download-page').hidden = name !== 'download';
+  $('#library-page').hidden = name !== 'library';
+  $('#settings-page').hidden = name !== 'settings';
+  $('#discover-page').hidden = name !== 'discover';
+  document.body.dataset.service = name === 'discover' ? discoverService : service;
+  for (const b of document.querySelectorAll('button[data-page]'))
+    b.classList.toggle('active', b.dataset.page === name);
+}
+for (const b of document.querySelectorAll('button[data-page]'))
+  b.onclick = () => page(b.dataset.page);
+$('#all').onclick = () => page('library');
+function source(value) {
+  service = value;
+  document.body.dataset.service = value;
+  const sc = value === 'soundcloud';
+  $('#headline').textContent = sc ? 'Треки из SoundCloud.' : 'Звук из YouTube.';
+  $('#tagline').textContent = sc
+    ? 'Сохраните любимый трек в нужном формате.'
+    : 'Видео, Shorts и записи эфиров — в вашу библиотеку.';
+  $('#source-label').textContent = sc ? 'Ссылка на трек' : 'Ссылка на видео';
+  $('#url').placeholder = sc
+    ? 'https://soundcloud.com/artist/track'
+    : 'https://www.youtube.com/watch?v=…';
+  $('#url').value = '';
+  $('#message').textContent = '';
+  for (const b of document.querySelectorAll('button[data-service]')) {
+    b.classList.toggle('active', b.dataset.service === value);
+    b.setAttribute('aria-selected', String(b.dataset.service === value));
+  }
+}
+for (const b of document.querySelectorAll('button[data-service]')) {
+  b.onclick = () => source(b.dataset.service);
+  b.onkeydown = (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      source(service === 'youtube' ? 'soundcloud' : 'youtube');
+      document.querySelector(`button[data-service="${service}"]`).focus();
+    }
+  };
+}
+source(service);
+function choose(f) {
+  selected = f;
+  $('#formats').replaceChildren();
+  for (const key of Object.keys(formats)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = key.toUpperCase();
+    b.className = key === f ? 'active' : '';
+    b.setAttribute('aria-pressed', String(key === f));
+    b.onclick = () => choose(key);
+    $('#formats').append(b);
+  }
+  $('#quality').replaceChildren(
+    ...formats[f].map((v) => new Option(v + (['wav', 'flac'].includes(f) ? ' бит' : ' кбит/с'), v)),
+  );
+  $('#quality').value = ['wav', 'flac'].includes(f) ? '16' : formats[f].at(-1);
+}
+choose(selected);
+async function api(url, options) {
+  const res = await fetch(url, options),
+    data = await res.json();
+  if (!res.ok) {
+    const e = new Error(data.error || 'Ошибка запроса');
+    e.data = data;
+    throw e;
+  }
+  return data;
+}
+function button() {
+  $('#submit').disabled = !ready;
+  $('#submit').textContent = 'Добавить в очередь ↓';
+}
+$('#paste').onclick = async () => {
+  try {
+    $('#url').value = await (window.desktop
+      ? window.desktop.readClipboard()
+      : navigator.clipboard.readText());
+  } catch {
+    $('#message').textContent = 'Вставьте ссылку через Ctrl+V.';
+  }
+  $('#url').focus();
+};
+async function enqueue(url, force = false) {
+  return api('/api/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url,
+      service: inferService(url),
+      format: selected,
+      quality: $('#quality').value,
+      force,
+    }),
+  });
+}
+$('#convert').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#submit').disabled = true;
+  $('#duplicates').replaceChildren();
+  const links = $('#url').value.split(/\s+/).filter(Boolean);
+  let count = 0;
+  for (const url of links) {
+    try {
+      await enqueue(url);
+      count++;
+    } catch (error) {
+      if (error.data?.duplicateId) {
+        const box = el('div', undefined, 'duplicate');
+        box.append(el('span', 'Уже в библиотеке: ' + url));
+        const b = el('button', 'Скачать ещё раз');
+        b.onclick = async () => {
+          b.disabled = true;
+          try {
+            await enqueue(url, true);
+            box.remove();
+            await refresh();
+          } catch (e) {
+            $('#message').textContent = e.message;
+            b.disabled = false;
+          }
+        };
+        box.append(b);
+        $('#duplicates').append(box);
+      } else $('#message').textContent = error.message;
+    }
+  }
+  if (count) $('#message').textContent = 'Добавлено в очередь: ' + count;
+  await refresh();
+  button();
+};
+const names = {
+    youtube: 'YouTube',
+    soundcloud: 'SoundCloud',
+    import: 'Мой файл',
+    archive: 'Архив',
+  },
+  statuses = {
+    queued: 'Очередь',
+    info: 'Информация…',
+    downloading: 'Скачивание',
+    converting: 'Конвертация…',
+    error: 'Ошибка',
+    done: 'Готово',
+    canceled: 'Отменено',
+  };
+function el(tag, text, cls) {
+  const n = document.createElement(tag);
+  if (text !== undefined) n.textContent = text;
+  if (cls) n.className = cls;
+  if (tag === 'button') n.type = 'button';
+  return n;
+}
+function metric(value, label) {
+  const n = el('div', undefined, 'metric');
+  n.append(el('b', value), el('span', label));
+  return n;
+}
+function row(j) {
+  const node = el('article', undefined, 'job'),
+    top = el('div', undefined, 'job-top'),
+    body = el('div', undefined, 'job-body');
+  const meta = el('p');
+  meta.append(
+    el('span', names[j.service] || 'Архив', 'badge ' + j.service),
+    document.createTextNode(
+      `${j.format.toUpperCase()} · ${new Date(j.created).toLocaleDateString('ru-RU')}${j.size ? ' · ' + (j.size / 1048576).toFixed(1) + ' МБ' : ''} · ${statuses[j.status]}`,
+    ),
+  );
+  body.append(el('strong', j.title), meta);
+  if (j.status === 'error') body.append(el('p', j.error, 'error'));
+  if (!['done', 'error', 'canceled'].includes(j.status)) {
+    const p = el('progress');
+    p.max = 100;
+    p.value = j.progress;
+    body.append(p);
+  }
+  const actions = el('div', undefined, 'job-actions');
+  if (j.status === 'done') {
+    const a = el('a', 'Сохранить ↓', 'download-link');
+    a.href = '/api/files/' + j.id;
+    a.download = '';
+    actions.append(a);
+    const b = el(
+      'button',
+      j.analysisStatus === 'running'
+        ? 'Анализ…'
+        : j.analysis
+          ? 'Повторить анализ'
+          : 'BPM / Тональность',
+    );
+    b.disabled = j.analysisStatus === 'running';
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api('/api/analyze/' + j.id, { method: 'POST' });
+        await refresh();
+      } catch (e) {
+        $('#library-message').textContent = e.message;
+        $('#message').textContent = e.message;
+        b.disabled = false;
+      }
+    };
+    actions.append(b);
+  }
+  if (j.url) {
+    const b = el('button', 'Ссылка');
+    b.onclick = async () => {
+      try {
+        await (window.desktop
+          ? window.desktop.writeClipboard(j.url)
+          : navigator.clipboard.writeText(j.url));
+        b.textContent = 'Скопировано';
+      } catch {
+        page('download');
+        source(j.service);
+        $('#url').value = j.url;
+      }
+    };
+    const retry = el('button', 'Загрузить ещё');
+    retry.onclick = () => {
+      page('download');
+      source(j.service);
+      $('#url').value = j.url;
+    };
+    actions.append(b, retry);
+  }
+  top.append(body, actions);
+  node.append(top);
+  if (j.analysis) {
+    const a = j.analysis,
+      area = el('div', undefined, 'analysis');
+    area.append(
+      metric(a.bpm, 'BPM · ' + (a.bpmConfidence >= 1.5 ? 'ритм выражен' : 'ритм неуверенный')),
+      metric(
+        a.key + ' ' + (a.scale === 'minor' ? 'minor' : 'major'),
+        'Тональность · ' + (a.scale === 'minor' ? 'минор' : 'мажор'),
+      ),
+    );
+    const ru = {
+      C: 'До',
+      'C#': 'До♯',
+      Db: 'Ре♭',
+      D: 'Ре',
+      'D#': 'Ре♯',
+      Eb: 'Ми♭',
+      E: 'Ми',
+      F: 'Фа',
+      'F#': 'Фа♯',
+      Gb: 'Соль♭',
+      G: 'Соль',
+      'G#': 'Соль♯',
+      Ab: 'Ля♭',
+      A: 'Ля',
+      'A#': 'Ля♯',
+      Bb: 'Си♭',
+      B: 'Си',
+    };
+    area.append(
+      el(
+        'small',
+        `${ru[a.key] || a.key} ${a.scale === 'minor' ? 'минор' : 'мажор'} · Уверенность: ${a.strength > 0.7 ? 'высокая' : a.strength > 0.45 ? 'средняя' : 'низкая'} (оценка алгоритма). Анализ ${a.seconds} с.`,
+      ),
+    );
+    node.append(area);
+  }
+  if (j.analysisError) node.append(el('p', j.analysisError, 'error'));
+  return node;
+}
+function render() {
+  const query = $('#search').value.toLowerCase(),
+    filter = $('#filter').value;
+  const list = jobs
+    .filter(
+      (j) =>
+        (!filter || j.service === filter) &&
+        (!$('#favorites').checked || j.favorite) &&
+        `${j.title} ${j.url || ''} ${(j.tags || []).join(' ')}`.toLowerCase().includes(query),
+    )
+    .sort((a, b) => b.created - a.created);
+  $('#jobs').replaceChildren(
+    ...(list.length
+      ? list.map(row)
+      : [el('div', 'Пока ничего нет. Добавьте файл или скачайте аудио.', 'empty')]),
+  );
+  const recent = [...jobs].sort((a, b) => b.created - a.created).slice(0, 3);
+  $('#recent').replaceChildren(
+    ...(recent.length ? recent.map(row) : [el('div', 'Здесь появятся ваши загрузки.', 'empty')]),
+  );
+  $('#count').textContent = jobs.length;
+  renderQueue();
+}
+$('#search').oninput = render;
+$('#filter').onchange = render;
+$('#import').onchange = async () => {
+  const f = $('#import').files[0];
+  if (!f) return;
+  $('#library-message').textContent = 'Импорт…';
+  try {
+    if (f.size > 200 * 1048576) throw new Error('Максимум 200 МБ.');
+    await api('/api/import?name=' + encodeURIComponent(f.name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: f,
+    });
+    $('#library-message').textContent = '';
+    await refresh();
+  } catch (e) {
+    $('#library-message').textContent = e.message;
+  }
+  $('#import').value = '';
+};
+let jobsTag = '';
+async function refresh() {
+  try {
+    const res = await fetch('/api/jobs?compact=1', {
+      headers: jobsTag ? { 'If-None-Match': jobsTag } : {},
+    });
+    if (res.status === 304) return;
+    if (!res.ok) throw Error();
+    jobsTag = res.headers.get('ETag') || '';
+    const nextJobs = await res.json();
+    for (const j of nextJobs)
+      if (j.status === 'done' && jobs.some((old) => old.id === j.id && old.status !== 'done'))
+        window.dispatchEvent(new CustomEvent('yoump3-ready', { detail: j.title }));
+    jobs = nextJobs;
+    button();
+    const next = JSON.stringify(jobs);
+    if (next !== signature) {
+      signature = next;
+      render();
+    }
+  } catch {
+    $('#message').textContent = 'Локальный сервер недоступен.';
+  }
+}
+
+let playingId = null,
+  trimId = null,
+  editId = null,
+  previewEnd = null;
+const audio = $('#audio');
+const savedVolume = Number(localStorage.getItem('volume') ?? 0.8);
+audio.volume = Number.isFinite(savedVolume) ? Math.max(0, Math.min(1, savedVolume)) : 0.8;
+$('#volume').value = audio.volume;
+const terminal = (j) => ['done', 'error', 'canceled'].includes(j.status);
+async function edit(id, data) {
+  await api('/api/edit/' + id, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  await refresh();
+}
+function playerInfo(j) {
+  $('#player-title').textContent = j.title;
+  $('#player-artist').textContent = j.artist || names[j.service] || '';
+  $('#player-favorite').textContent = j.favorite ? '♥' : '♡';
+  $('#player-art').replaceChildren();
+  if (j.cover) {
+    const image = el('img');
+    image.src = '/api/cover/' + j.id;
+    image.alt = 'Обложка';
+    $('#player-art').append(image);
+  } else $('#player-art').textContent = '♫';
+}
+async function playTrack(j) {
+  if (j.status !== 'done') return;
+  if (playingId !== j.id) {
+    playingId = j.id;
+    previewEnd = null;
+    audio.src = '/api/stream/' + j.id;
+    playerInfo(j);
+  }
+  $('#player').hidden = false;
+  document.body.classList.add('has-player');
+  try {
+    await audio.play();
+  } catch {
+    $('#library-message').textContent =
+      'Не удалось воспроизвести этот формат. Сохраните файл и откройте во внешнем плеере.';
+  }
+}
+function time(value) {
+  value = Number.isFinite(value) ? Math.max(0, value) : 0;
+  return Math.floor(value / 60) + ':' + String(Math.floor(value % 60)).padStart(2, '0');
+}
+audio.onloadedmetadata = () => {
+  $('#duration').textContent = time(audio.duration);
+  $('#seek').max = Number.isFinite(audio.duration) ? audio.duration : 100;
+};
+audio.ontimeupdate = () => {
+  $('#elapsed').textContent = time(audio.currentTime);
+  $('#seek').value = audio.currentTime;
+  if (previewEnd !== null && audio.currentTime >= previewEnd) {
+    audio.pause();
+    previewEnd = null;
+  }
+};
+audio.onplay = () => {
+  $('#play-pause').textContent = 'Ⅱ';
+  $('#play-pause').setAttribute('aria-label', 'Пауза');
+};
+audio.onpause = () => {
+  $('#play-pause').textContent = '▶';
+  $('#play-pause').setAttribute('aria-label', 'Воспроизвести');
+};
+audio.onerror = () => {
+  $('#library-message').textContent = 'Файл не найден или не поддерживается плеером.';
+};
+$('#seek').oninput = () => {
+  previewEnd = null;
+  audio.currentTime = Number($('#seek').value);
+};
+$('#play-pause').onclick = () => (audio.paused ? audio.play().catch(() => {}) : audio.pause());
+$('#back10').onclick = () => (audio.currentTime = Math.max(0, audio.currentTime - 10));
+$('#forward10').onclick = () =>
+  (audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10));
+$('#volume').oninput = () => {
+  audio.volume = Number($('#volume').value);
+  audio.muted = false;
+  localStorage.setItem('volume', audio.volume);
+  $('#mute').textContent = '♪';
+};
+$('#mute').onclick = () => {
+  audio.muted = !audio.muted;
+  $('#mute').textContent = audio.muted ? '×' : '♪';
+};
+function adjacent(direction) {
+  const list = jobs.filter((j) => j.status === 'done').sort((a, b) => b.created - a.created),
+    i = list.findIndex((j) => j.id === playingId),
+    j = list[i + direction];
+  if (j) playTrack(j);
+}
+$('#previous').onclick = () => adjacent(-1);
+$('#next').onclick = () => adjacent(1);
+audio.onended = () => adjacent(1);
+$('#player-favorite').onclick = async () => {
+  const j = jobs.find((j) => j.id === playingId);
+  if (j) {
+    await edit(j.id, { favorite: !j.favorite });
+    playerInfo(jobs.find((j) => j.id === playingId));
+  }
+};
+$('#player-trim').onclick = () => {
+  const j = jobs.find((j) => j.id === playingId);
+  if (j) openTrim(j);
+};
+for (const edge of ['start', 'end'])
+  $('#mark-' + edge).onclick = () => {
+    if (trimId !== playingId) {
+      $('#trim-message').textContent = 'Сначала включите этот трек в плеере.';
+      return;
+    }
+    $('#trim-' + edge).value = audio.currentTime.toFixed(1);
+  };
+$('#preview-trim').onclick = async () => {
+  const j = jobs.find((j) => j.id === trimId);
+  if (!j) return;
+  const start = Number($('#trim-start').value),
+    end = Number($('#trim-end').value);
+  if (end <= start) {
+    $('#trim-message').textContent = 'Конец должен быть после начала.';
+    return;
+  }
+  await playTrack(j);
+  if (audio.readyState < 1)
+    await new Promise((resolve) =>
+      audio.addEventListener('loadedmetadata', resolve, { once: true }),
+    );
+  audio.currentTime = start;
+  previewEnd = end;
+};
+$('#trim-form').onsubmit = async (event) => {
+  event.preventDefault();
+  try {
+    await api('/api/trim/' + trimId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        start: Number($('#trim-start').value),
+        end: Number($('#trim-end').value),
+        fadeIn: Number($('#trim-fade-in')?.value || 0),
+        fadeOut: Number($('#trim-fade-out')?.value || 0),
+      }),
+    });
+    $('#trim-dialog').close();
+    await refresh();
+  } catch (e) {
+    $('#trim-message').textContent = e.message;
+  }
+};
+for (const b of document.querySelectorAll('[data-close]'))
+  b.onclick = () => {
+    document.getElementById(b.dataset.close).close();
+    previewEnd = null;
+  };
+$('#edit-form').onsubmit = async (event) => {
+  event.preventDefault();
+  try {
+    await edit(editId, { tags: $('#tags-input').value.split(',') });
+    $('#edit-dialog').close();
+  } catch (e) {
+    $('#library-message').textContent = e.message;
+  }
+};
+const baseRow = row;
+row = function (j) {
+  const node = baseRow(j),
+    actions = node.querySelector('.job-actions');
+  const favorite = el('button', j.favorite ? '♥' : '♡', 'favorite');
+  favorite.setAttribute('aria-label', j.favorite ? 'Убрать из избранного' : 'В избранное');
+  favorite.onclick = () =>
+    edit(j.id, { favorite: !j.favorite }).catch(
+      (e) => ($('#library-message').textContent = e.message),
+    );
+  actions.prepend(favorite);
+  if (j.status === 'done') {
+    const play = el('button', '▶ Слушать', 'listen');
+    play.onclick = () => playTrack(j);
+    actions.prepend(play);
+    const trim = el('button', 'Обрезать');
+    trim.onclick = () => openTrim(j);
+    const tags = el('button', '# Теги');
+    tags.onclick = () => {
+      editId = j.id;
+      $('#tags-input').value = (j.tags || []).join(', ');
+      $('#edit-dialog').showModal();
+    };
+    actions.append(trim, tags);
+    if (j.cover) {
+      const image = el('img', undefined, 'track-cover');
+      image.src = '/api/cover/' + j.id;
+      image.alt = '';
+      node.querySelector('.job-top').prepend(image);
+    }
+  } else if (!terminal(j)) {
+    const cancel = el('button', 'Отменить');
+    cancel.onclick = async () => {
+      await api('/api/cancel/' + j.id, { method: 'POST' });
+      await refresh();
+    };
+    actions.append(cancel);
+  }
+  if (j.tags?.length) {
+    const tags = el('div', undefined, 'tags');
+    for (const tag of j.tags) {
+      const b = el('button', '#' + tag);
+      b.onclick = () => {
+        page('library');
+        $('#search').value = tag;
+        render();
+      };
+      tags.append(b);
+    }
+    node.append(tags);
+  }
+  if (j.exported) node.append(el('p', 'Сохранено: ' + j.exported, 'exported'));
+  if (j.exportError) node.append(el('p', j.exportError, 'error'));
+  return node;
+};
+$('#favorites').onchange = render;
+function renderQueue() {
+  const pending = jobs.filter((j) => !terminal(j));
+  $('#queue').replaceChildren();
+  if (!pending.length) return;
+  $('#queue').append(el('h2', 'В очереди: ' + pending.length));
+  for (const j of pending) {
+    const line = el('div', undefined, 'queue-item'),
+      cancel = el('button', 'Отменить');
+    cancel.onclick = async () => {
+      await api('/api/cancel/' + j.id, { method: 'POST' });
+      await refresh();
+    };
+    line.append(
+      el(
+        'span',
+        (j.title || j.url) +
+          ' · ' +
+          statuses[j.status] +
+          (j.progress ? ' ' + Math.round(j.progress) + '%' : ''),
+      ),
+      cancel,
+    );
+    $('#queue').append(line);
+  }
+}
+async function loadSettings() {
+  const s = await api('/api/settings');
+  $('#metadata-setting').checked = s.metadata;
+  $('#cover-setting').checked = s.cover;
+  $('#folder-path').textContent = s.folder || 'Папка не выбрана — используйте «Сохранить» у трека.';
+  $('#choose-folder').disabled = !window.desktop;
+  if (!window.desktop) $('#choose-folder').textContent = 'Выбор папки доступен в EXE';
+}
+for (const name of ['metadata', 'cover'])
+  $('#' + name + '-setting').onchange = async () => {
+    try {
+      await api('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [name]: $('#' + name + '-setting').checked }),
+      });
+      $('#settings-message').textContent = 'Сохранено · применяется к новым задачам';
+    } catch (e) {
+      $('#settings-message').textContent = e.message;
+    }
+  };
+$('#choose-folder').onclick = async () => {
+  try {
+    await window.desktop.chooseFolder();
+    await loadSettings();
+  } catch (e) {
+    $('#settings-message').textContent = e.message;
+  }
+};
 await loadSettings();
 
-let discoverService='youtube',searchId=null,searchGeneration=0,searchPage=1,searchQuery='',searchItems=[],onlineItem=null,searchBusy=false;
-for(const key of Object.keys(formats))$('#discover-format').append(new Option(key.toUpperCase(),key));
-function discoverQuality(){const f=$('#discover-format').value;$('#discover-quality').replaceChildren(...formats[f].map(q=>new Option(q+(['wav','flac'].includes(f)?' бит':' кбит/с'),q)));$('#discover-quality').value=['wav','flac'].includes(f)?'16':formats[f].at(-1);}
-$('#discover-format').onchange=discoverQuality;discoverQuality();
-async function cancelSearch(){searchGeneration++;if(searchId){const id=searchId;searchId=null;await api('/api/search/'+id,{method:'DELETE'}).catch(()=>{});}searchBusy=false;searchControls();}
-function searchControls(){$('#discover-cancel').hidden=!searchBusy;$('#discover-submit').textContent=searchBusy?'Новый поиск →':'Найти →';$('#discover-more').hidden=searchBusy||searchPage>=3||searchItems.length<searchPage*(discoverService==='soundcloud'?6:10);}
-function closeOnline(){const hadItem=!!onlineItem;$('#online-frame').replaceChildren();$('#online-player').hidden=true;onlineItem=null;if(hadItem)renderDiscover();}
-audio.addEventListener('play',closeOnline);
-function discoverSource(value){cancelSearch();discoverService=value;document.body.dataset.service=value;for(const b of document.querySelectorAll('[data-discover]')){b.classList.toggle('active',b.dataset.discover===value);b.setAttribute('aria-selected',String(b.dataset.discover===value));}searchPage=1;searchItems=[];$('#discover-results').replaceChildren();$('#discover-message').textContent='';$('#discover-more').hidden=true;closeOnline();}
-for(const b of document.querySelectorAll('[data-discover]')){b.onclick=()=>discoverSource(b.dataset.discover);b.onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();discoverSource(discoverService==='youtube'?'soundcloud':'youtube');document.querySelector(`[data-discover="${discoverService}"]`).focus();}};}
-async function openOriginal(item){if(window.desktop)await window.desktop.openSource(item.url);else window.open(item.url,'_blank','noopener');}
-function openOnline(item){audio.pause();closeOnline();onlineItem=item;$('#online-title').textContent=item.title;const frame=el('iframe');frame.title=(item.service==='youtube'?'YouTube':'SoundCloud')+' — '+item.title;frame.allow='autoplay; encrypted-media; fullscreen; picture-in-picture';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';frame.src=item.service==='youtube'?`https://www.youtube-nocookie.com/embed/${encodeURIComponent(item.id)}?autoplay=1&rel=0`:'https://w.soundcloud.com/player/?url='+encodeURIComponent(item.url)+'&auto_play=true&hide_related=true&show_comments=false&visual=true';$('#online-frame').append(frame);$('#online-player').hidden=false;renderDiscover();$('#workspace').scrollTo({top:0,behavior:'smooth'});}
-$('#online-close').onclick=closeOnline;$('#online-original').onclick=()=>onlineItem&&openOriginal(onlineItem);$('#online-download').onclick=()=>onlineItem&&queueResult(onlineItem,$('#online-download'));
-async function queueResult(item,button,force=false){button.disabled=true;try{await api('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:item.url,service:item.service,format:$('#discover-format').value,quality:$('#discover-quality').value,force})});button.textContent='В очереди ✓';$('#discover-message').textContent='Добавлено: '+item.title;await refresh();}catch(e){button.disabled=false;if(e.data?.duplicateId){button.textContent='Уже есть · скачать ещё?';button.onclick=()=>queueResult(item,button,true);$('#discover-message').textContent='Эта запись уже в библиотеке или очереди.';}else $('#discover-message').textContent=e.message;}}
-function renderDiscover(){const list=$('#discover-results');list.replaceChildren();for(const item of searchItems){if(onlineItem?.url===item.url)continue;const card=el('article',undefined,'search-card'),visual=el('button',undefined,'result-visual');visual.type='button';visual.setAttribute('aria-label','Слушать: '+item.title);if(item.thumbnail){const img=el('img');img.src=item.thumbnail;img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>img.remove();visual.append(img);}visual.append(el('span','▶','result-play'));visual.onclick=()=>openOnline(item);const body=el('div',undefined,'result-body');body.append(el('h2',item.title),el('p',item.artist),el('small',`${item.duration?time(item.duration):'Длительность неизвестна'}${item.views!==null?' · '+new Intl.NumberFormat('ru-RU',{notation:'compact'}).format(item.views)+' просм.':''}`));const actions=el('div',undefined,'result-actions'),play=el('button',item.service==='youtube'?'Смотреть / слушать':'Слушать'),download=el('button','В очередь ↓','result-download'),external=el('button','Оригинал ↗');play.onclick=()=>openOnline(item);download.onclick=()=>queueResult(item,download);external.onclick=()=>openOriginal(item);actions.append(play,download,external);card.append(visual,body,actions);list.append(card);}if(!searchItems.length)list.append(el('div','Ничего не найдено. Попробуйте другой запрос.','empty'));}
-async function searchOnline(more=false){const query=$('#discover-query').value.trim();if(query.length<2)return;await cancelSearch();const generation=++searchGeneration;if(!more){searchItems=[];searchPage=1;searchQuery=query;$('#discover-results').replaceChildren();for(let n=0;n<4;n++)$('#discover-results').append(el('div',undefined,'search-skeleton'));}else searchPage++;const currentService=discoverService,currentPage=searchPage;searchBusy=true;searchControls();$('#discover-message').textContent='Ищем в '+names[currentService]+'…';try{const task=await api('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:currentService,query:searchQuery,page:currentPage})});if(generation!==searchGeneration){await api('/api/search/'+task.id,{method:'DELETE'}).catch(()=>{});return;}searchId=task.id;for(let i=0;i<130;i++){const result=await api('/api/search/'+task.id);if(generation!==searchGeneration)return;if(result.status==='error')throw new Error(result.error);if(result.status==='done'){searchItems=[...new Map([...searchItems,...result.items].map(x=>[x.url,x])).values()];renderDiscover();$('#discover-message').textContent='Найдено: '+searchItems.length;return;}if(result.status==='canceled')return;await new Promise(resolve=>setTimeout(resolve,600));}throw new Error('Поиск не ответил. Попробуйте ещё раз.');}catch(e){if(generation===searchGeneration){$('#discover-message').textContent=e.message;if(more)searchPage--;}}finally{if(generation===searchGeneration){searchBusy=false;searchId=null;searchControls();}}}
-$('#discover-form').onsubmit=e=>{e.preventDefault();closeOnline();searchOnline();};$('#discover-more').onclick=()=>searchOnline(true);$('#discover-cancel').onclick=async()=>{await cancelSearch();$('#discover-message').textContent='Поиск отменён.';};
+let discoverService =
+    localStorage.getItem('discover-service') === '"soundcloud"' ? 'soundcloud' : 'youtube',
+  searchId = null,
+  searchGeneration = 0,
+  searchPage = 1,
+  searchQuery = '',
+  searchItems = [],
+  onlineItem = null,
+  searchBusy = false;
+for (const key of Object.keys(formats))
+  $('#discover-format').append(new Option(key.toUpperCase(), key));
+function discoverQuality() {
+  const f = $('#discover-format').value;
+  $('#discover-quality').replaceChildren(
+    ...formats[f].map((q) => new Option(q + (['wav', 'flac'].includes(f) ? ' бит' : ' кбит/с'), q)),
+  );
+  $('#discover-quality').value = ['wav', 'flac'].includes(f) ? '16' : formats[f].at(-1);
+}
+$('#discover-format').onchange = discoverQuality;
+discoverQuality();
+async function cancelSearch() {
+  searchGeneration++;
+  if (searchId) {
+    const id = searchId;
+    searchId = null;
+    await api('/api/search/' + id, { method: 'DELETE' }).catch(() => {});
+  }
+  searchBusy = false;
+  searchControls();
+}
+function searchControls() {
+  $('#discover-cancel').hidden = !searchBusy;
+  $('#discover-submit').textContent = searchBusy ? 'Новый поиск →' : 'Найти →';
+  $('#discover-more').hidden =
+    searchBusy ||
+    searchPage >= 3 ||
+    searchItems.length < searchPage * (discoverService === 'soundcloud' ? 6 : 10);
+}
+function closeOnline() {
+  const hadItem = !!onlineItem;
+  $('#online-frame').replaceChildren();
+  $('#online-player').hidden = true;
+  onlineItem = null;
+  if (hadItem) renderDiscover();
+}
+audio.addEventListener('play', () => closeOnline());
+function discoverSource(value) {
+  cancelSearch();
+  discoverService = value;
+  localStorage.setItem('discover-service', JSON.stringify(value));
+  document.body.dataset.service = value;
+  for (const b of document.querySelectorAll('[data-discover]')) {
+    b.classList.toggle('active', b.dataset.discover === value);
+    b.setAttribute('aria-selected', String(b.dataset.discover === value));
+  }
+  searchPage = 1;
+  searchItems = [];
+  $('#discover-results').replaceChildren();
+  $('#discover-message').textContent = '';
+  $('#discover-more').hidden = true;
+  closeOnline();
+}
+for (const b of document.querySelectorAll('[data-discover]')) {
+  b.onclick = () => discoverSource(b.dataset.discover);
+  b.onkeydown = (e) => {
+    if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault();
+      discoverSource(discoverService === 'youtube' ? 'soundcloud' : 'youtube');
+      document.querySelector(`[data-discover="${discoverService}"]`).focus();
+    }
+  };
+}
+async function openOriginal(item) {
+  if (window.desktop) await window.desktop.openSource(item.url);
+  else window.open(item.url, '_blank', 'noopener');
+}
+function openOnline(item) {
+  audio.pause();
+  closeOnline();
+  onlineItem = item;
+  $('#online-title').textContent = item.title;
+  const frame = el('iframe');
+  frame.title = (item.service === 'youtube' ? 'YouTube' : 'SoundCloud') + ' — ' + item.title;
+  frame.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+  frame.allowFullscreen = true;
+  frame.referrerPolicy = 'strict-origin-when-cross-origin';
+  frame.src =
+    item.service === 'youtube'
+      ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(item.id)}?autoplay=1&rel=0`
+      : 'https://w.soundcloud.com/player/?url=' +
+        encodeURIComponent(item.url) +
+        '&auto_play=true&hide_related=true&show_comments=false&visual=true';
+  $('#online-frame').append(frame);
+  $('#online-player').hidden = false;
+  renderDiscover();
+  $('#workspace').scrollTo({ top: 0, behavior: 'smooth' });
+}
+$('#online-close').onclick = () => closeOnline();
+$('#online-original').onclick = () => onlineItem && openOriginal(onlineItem);
+$('#online-download').onclick = () => onlineItem && queueResult(onlineItem, $('#online-download'));
+async function queueResult(item, button, force = false) {
+  button.disabled = true;
+  try {
+    await api('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: item.url,
+        service: item.service,
+        format: $('#discover-format').value,
+        quality: $('#discover-quality').value,
+        force,
+      }),
+    });
+    button.textContent = 'В очереди ✓';
+    $('#discover-message').textContent = 'Добавлено: ' + item.title;
+    await refresh();
+  } catch (e) {
+    button.disabled = false;
+    if (e.data?.duplicateId) {
+      button.textContent = 'Уже есть · скачать ещё?';
+      button.onclick = () => queueResult(item, button, true);
+      $('#discover-message').textContent = 'Эта запись уже в библиотеке или очереди.';
+    } else $('#discover-message').textContent = e.message;
+  }
+}
+function renderDiscover() {
+  const list = $('#discover-results');
+  list.replaceChildren();
+  for (const item of searchItems) {
+    if (onlineItem?.url === item.url) continue;
+    const card = el('article', undefined, 'search-card'),
+      visual = el('button', undefined, 'result-visual');
+    visual.type = 'button';
+    visual.setAttribute('aria-label', 'Слушать: ' + item.title);
+    if (item.thumbnail) {
+      const img = el('img');
+      img.src = item.thumbnail;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.onerror = () => img.remove();
+      visual.append(img);
+    }
+    visual.append(el('span', '▶', 'result-play'));
+    visual.onclick = () => openOnline(item);
+    const body = el('div', undefined, 'result-body');
+    body.append(
+      el('h2', item.title),
+      el('p', item.artist),
+      el(
+        'small',
+        `${item.duration ? time(item.duration) : 'Длительность неизвестна'}${item.views !== null ? ' · ' + new Intl.NumberFormat('ru-RU', { notation: 'compact' }).format(item.views) + ' просм.' : ''}`,
+      ),
+    );
+    const actions = el('div', undefined, 'result-actions'),
+      play = el('button', item.service === 'youtube' ? 'Смотреть / слушать' : 'Слушать'),
+      download = el('button', 'В очередь ↓', 'result-download'),
+      external = el('button', 'Оригинал ↗');
+    play.onclick = () => openOnline(item);
+    download.onclick = () => queueResult(item, download);
+    external.onclick = () => openOriginal(item);
+    actions.append(play, download, external);
+    card.append(visual, body, actions);
+    list.append(card);
+  }
+  if (!searchItems.length)
+    list.append(el('div', 'Ничего не найдено. Попробуйте другой запрос.', 'empty'));
+}
+async function searchOnline(more = false) {
+  const query = $('#discover-query').value.trim();
+  if (query.length < 2) return;
+  await cancelSearch();
+  const generation = ++searchGeneration;
+  if (!more) {
+    searchItems = [];
+    searchPage = 1;
+    searchQuery = query;
+    $('#discover-results').replaceChildren();
+    for (let n = 0; n < 4; n++)
+      $('#discover-results').append(el('div', undefined, 'search-skeleton'));
+  } else searchPage++;
+  const currentService = discoverService,
+    currentPage = searchPage;
+  searchBusy = true;
+  searchControls();
+  $('#discover-message').textContent = 'Ищем в ' + names[currentService] + '…';
+  try {
+    const task = await api('/api/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: currentService, query: searchQuery, page: currentPage }),
+    });
+    if (generation !== searchGeneration) {
+      await api('/api/search/' + task.id, { method: 'DELETE' }).catch(() => {});
+      return;
+    }
+    searchId = task.id;
+    for (let i = 0; i < 130; i++) {
+      const result = await api('/api/search/' + task.id);
+      if (generation !== searchGeneration) return;
+      if (result.status === 'error') throw new Error(result.error);
+      if (result.status === 'done') {
+        searchItems = [
+          ...new Map([...searchItems, ...result.items].map((x) => [x.url, x])).values(),
+        ];
+        renderDiscover();
+        $('#discover-message').textContent = 'Найдено: ' + searchItems.length;
+        return;
+      }
+      if (result.status === 'canceled') return;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+    throw new Error('Поиск не ответил. Попробуйте ещё раз.');
+  } catch (e) {
+    if (generation === searchGeneration) {
+      $('#discover-message').textContent = e.message;
+      if (more) searchPage--;
+    }
+  } finally {
+    if (generation === searchGeneration) {
+      searchBusy = false;
+      searchId = null;
+      searchControls();
+    }
+  }
+}
+$('#discover-form').onsubmit = (e) => {
+  e.preventDefault();
+  closeOnline();
+  searchOnline();
+};
+$('#discover-more').onclick = () => searchOnline(true);
+$('#discover-cancel').onclick = async () => {
+  await cancelSearch();
+  $('#discover-message').textContent = 'Поиск отменён.';
+};
 
-const trimAudio=$('#trim-audio');let trimDuration=0,trimPeaks=null,trimVersion=0,rangePlayback=false;
-const trimStart=()=>Number($('#trim-start').value),trimEnd=()=>Number($('#trim-end').value);
-function preciseTime(n){return time(n)+'.'+Math.floor((n%1)*10);}
-function drawTrim(){const track=$('#trim-track');if(!trimDuration)return;const start=trimStart()/trimDuration*100,end=trimEnd()/trimDuration*100;$('#trim-selection').style.left=start+'%';$('#trim-selection').style.width=(end-start)+'%';$('#trim-left').style.left=start+'%';$('#trim-right').style.left=end+'%';$('#trim-shade-left').style.width=start+'%';$('#trim-shade-right').style.left=end+'%';$('#trim-shade-right').style.width=(100-end)+'%';$('#trim-position').style.left=trimAudio.currentTime/trimDuration*100+'%';$('#trim-selection-length').textContent='Выделено '+(trimEnd()-trimStart()).toFixed(2)+' с';$('#trim-time').textContent=preciseTime(trimAudio.currentTime)+' / '+preciseTime(trimDuration);for(const [id,val]of [['trim-left',trimStart()],['trim-right',trimEnd()]]){const h=$('#'+id);h.setAttribute('aria-valuenow',val.toFixed(2));h.setAttribute('aria-valuemin','0');h.setAttribute('aria-valuemax',String(trimDuration));h.setAttribute('aria-valuetext',preciseTime(val));}
- const canvas=$('#trim-canvas'),rect=track.getBoundingClientRect(),dpr=devicePixelRatio||1;canvas.width=Math.round(rect.width*dpr);canvas.height=150*dpr;const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);const w=rect.width;ctx.strokeStyle='#2d2d2d';ctx.lineWidth=1;for(let i=0;i<=10;i++){const x=w*i/10;ctx.beginPath();ctx.moveTo(x,20);ctx.lineTo(x,150);ctx.stroke();ctx.fillStyle='#777777';ctx.font='10px Arial';ctx.fillText(time(trimDuration*i/10),Math.max(2,Math.min(w-35,x+4)),13);}if(trimPeaks){const count=Math.min(trimPeaks.length,Math.floor(w/3));for(let i=0;i<count;i++){const index=Math.floor(i/count*trimPeaks.length),p=trimPeaks[index],t=i/count*trimDuration;ctx.fillStyle=t>=trimStart()&&t<=trimEnd()?'#dedede':'#555555';const h=Math.max(2,p*100);ctx.fillRect(i/count*w,85-h/2,Math.max(1,w/count-1),h);}}}
-async function openTrim(j){trimVersion++;const version=trimVersion;trimAudio.pause();audio.pause();closeOnline();trimId=j.id;trimPeaks=null;trimDuration=j.duration||0;$('#trim-title').textContent=j.title;$('#trim-message').textContent='';$('#trim-wave-status').textContent='Подготавливаем звуковую волну…';$('#trim-zoom').value='1';$('#trim-track').style.width='100%';$('#trim-start').value=0;$('#trim-end').value=trimDuration||0;$('#trim-dialog').showModal();trimAudio.src='/api/stream/'+j.id;trimAudio.load();
- try{for(let i=0;i<125;i++){const w=await api('/api/wave/'+j.id);if(version!==trimVersion)return;if(w.status==='error')throw new Error(w.error);if(w.status==='done'){trimDuration=w.duration;trimPeaks=w.peaks;$('#trim-end').value=Math.min(trimEnd()||w.duration,w.duration).toFixed(2);$('#trim-start').max=String(w.duration);$('#trim-end').max=String(w.duration);$('#trim-wave-status').textContent='Тяните края выделения. Нажмите на волну, чтобы слушать с этой точки.';drawTrim();return;}await new Promise(r=>setTimeout(r,500));}throw new Error('Волна строится дольше обычного. Можно слушать трек и задавать границы на шкале.');}catch(e){if(version===trimVersion)$('#trim-wave-status').textContent=e.message;}}
-trimAudio.onloadedmetadata=()=>{if(Number.isFinite(trimAudio.duration)){trimDuration=trimAudio.duration;if(!trimEnd())$('#trim-end').value=trimDuration.toFixed(2);drawTrim();}};
-trimAudio.ontimeupdate=()=>{if(rangePlayback&&trimAudio.currentTime>=trimEnd()){if($('#trim-loop').checked)trimAudio.currentTime=trimStart();else trimAudio.pause();}drawTrim();};trimAudio.onplay=()=>$('#trim-play').textContent='Ⅱ Пауза';trimAudio.onpause=()=>$('#trim-play').textContent='▶ Слушать';trimAudio.onerror=()=>$('#trim-message').textContent='Не удалось открыть аудио для прослушивания.';
-$('#trim-play').onclick=()=>{if(trimAudio.paused){rangePlayback=false;trimAudio.play().catch(()=>{});}else trimAudio.pause();};
-$('#preview-trim').onclick=()=>{rangePlayback=true;trimAudio.currentTime=trimStart();trimAudio.play().catch(()=>$('#trim-message').textContent='Не удалось начать прослушивание.');};
-for(const edge of ['start','end'])$('#mark-'+edge).onclick=()=>{const pos=trimAudio.currentTime;if(edge==='start')$('#trim-start').value=Math.min(pos,trimEnd()-.05).toFixed(2);else $('#trim-end').value=Math.max(pos,trimStart()+.05).toFixed(2);drawTrim();};
-for(const edge of ['start','end'])$('#trim-'+edge).oninput=()=>{let v=Number($('#trim-'+edge).value);v=Math.max(0,Math.min(trimDuration,v));if(edge==='start')v=Math.min(v,trimEnd()-.05);else v=Math.max(v,trimStart()+.05);$('#trim-'+edge).value=v;drawTrim();};
-function pointerTime(event){const r=$('#trim-track').getBoundingClientRect();return Math.max(0,Math.min(trimDuration,(event.clientX-r.left)/r.width*trimDuration));}
-for(const [id,edge]of [['trim-left','start'],['trim-right','end']]){const h=$('#'+id);let dragging=false;function change(v){if(edge==='start')v=Math.min(v,trimEnd()-.05);else v=Math.max(v,trimStart()+.05);$('#trim-'+edge).value=Math.max(0,Math.min(trimDuration,v)).toFixed(2);drawTrim();}h.onpointerdown=e=>{e.preventDefault();e.stopPropagation();dragging=true;h.setPointerCapture(e.pointerId);};h.onpointermove=e=>{if(dragging)change(pointerTime(e));};h.onpointerup=e=>{dragging=false;h.releasePointerCapture(e.pointerId);};h.onpointercancel=()=>dragging=false;h.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();change(e.key==='Home'?0:e.key==='End'?trimDuration:(edge==='start'?trimStart():trimEnd())+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?1:.1));}};}
-let trimScrubbing=false;const track=$('#trim-track');track.onpointerdown=e=>{if(e.target.closest('.trim-handle')||!trimDuration)return;trimScrubbing=true;track.setPointerCapture(e.pointerId);rangePlayback=false;trimAudio.currentTime=pointerTime(e);trimAudio.play().catch(()=>{});drawTrim();};track.onpointermove=e=>{if(trimScrubbing){trimAudio.currentTime=pointerTime(e);drawTrim();}};track.onpointerup=e=>{trimScrubbing=false;track.releasePointerCapture(e.pointerId);};track.onpointercancel=()=>trimScrubbing=false;
-$('#trim-zoom').onchange=()=>{$('#trim-track').style.width=(Number($('#trim-zoom').value)*100)+'%';drawTrim();};
-$('#trim-dialog').addEventListener('close',()=>{trimVersion++;trimAudio.pause();});new ResizeObserver(()=>{if($('#trim-dialog').open)drawTrim();}).observe($('#trim-viewport'));
-function descriptionBlock(item){const details=el('details',undefined,'video-description'),summary=el('summary','Описание видео'),body=el('div',undefined,'description-body');details.append(summary,body);let loaded=false;details.ontoggle=async()=>{if(!details.open||loaded)return;loaded=true;body.textContent=item.description||'Загружаем полное описание…';try{for(let i=0;i<125;i++){const r=await api('/api/description/'+item.id);if(r.status==='error')throw new Error(r.error);if(r.status==='done'){body.textContent=r.description;return;}await new Promise(resolve=>setTimeout(resolve,500));}throw new Error('Описание загружается дольше обычного.');}catch(e){body.textContent=e.message;const retry=el('button','Повторить');retry.onclick=()=>{loaded=false;details.open=false;details.open=true;};body.append(retry);}};return details;}
-const baseDiscover=renderDiscover;renderDiscover=function(){baseDiscover();const cards=$('#discover-results').children;searchItems.filter(item=>item.url!==onlineItem?.url).forEach((item,index)=>{if(item.service==='youtube')cards[index]?.append(descriptionBlock(item));});};
-const priorOnline=openOnline;openOnline=function(item){priorOnline(item);$('#online-description').replaceChildren();if(item.service==='youtube')$('#online-description').append(descriptionBlock(item));};
+const trimAudio = $('#trim-audio');
+let trimDuration = 0,
+  trimPeaks = null,
+  trimVersion = 0,
+  rangePlayback = false;
+const trimStart = () => Number($('#trim-start').value),
+  trimEnd = () => Number($('#trim-end').value);
+function preciseTime(n) {
+  return time(n) + '.' + Math.floor((n % 1) * 10);
+}
+function drawTrim() {
+  const track = $('#trim-track');
+  if (!trimDuration) return;
+  const start = (trimStart() / trimDuration) * 100,
+    end = (trimEnd() / trimDuration) * 100;
+  $('#trim-selection').style.left = start + '%';
+  $('#trim-selection').style.width = end - start + '%';
+  $('#trim-left').style.left = start + '%';
+  $('#trim-right').style.left = end + '%';
+  $('#trim-shade-left').style.width = start + '%';
+  $('#trim-shade-right').style.left = end + '%';
+  $('#trim-shade-right').style.width = 100 - end + '%';
+  $('#trim-position').style.left = (trimAudio.currentTime / trimDuration) * 100 + '%';
+  $('#trim-selection-length').textContent =
+    'Выделено ' + (trimEnd() - trimStart()).toFixed(2) + ' с';
+  $('#trim-time').textContent =
+    preciseTime(trimAudio.currentTime) + ' / ' + preciseTime(trimDuration);
+  for (const [id, val] of [
+    ['trim-left', trimStart()],
+    ['trim-right', trimEnd()],
+  ]) {
+    const h = $('#' + id);
+    h.setAttribute('aria-valuenow', val.toFixed(2));
+    h.setAttribute('aria-valuemin', '0');
+    h.setAttribute('aria-valuemax', String(trimDuration));
+    h.setAttribute('aria-valuetext', preciseTime(val));
+  }
+  const canvas = $('#trim-canvas'),
+    rect = track.getBoundingClientRect(),
+    dpr = devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = 150 * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const w = rect.width;
+  ctx.strokeStyle = '#2d2d2d';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) {
+    const x = (w * i) / 10;
+    ctx.beginPath();
+    ctx.moveTo(x, 20);
+    ctx.lineTo(x, 150);
+    ctx.stroke();
+    ctx.fillStyle = '#777777';
+    ctx.font = '10px Arial';
+    ctx.fillText(time((trimDuration * i) / 10), Math.max(2, Math.min(w - 35, x + 4)), 13);
+  }
+  if (trimPeaks) {
+    const count = Math.min(trimPeaks.length, Math.floor(w / 3));
+    for (let i = 0; i < count; i++) {
+      const index = Math.floor((i / count) * trimPeaks.length),
+        p = trimPeaks[index],
+        t = (i / count) * trimDuration;
+      ctx.fillStyle = t >= trimStart() && t <= trimEnd() ? '#dedede' : '#555555';
+      const h = Math.max(2, p * 100);
+      ctx.fillRect((i / count) * w, 85 - h / 2, Math.max(1, w / count - 1), h);
+    }
+  }
+}
+async function openTrim(j) {
+  trimVersion++;
+  const version = trimVersion;
+  trimAudio.pause();
+  audio.pause();
+  closeOnline();
+  trimId = j.id;
+  trimPeaks = null;
+  trimDuration = j.duration || 0;
+  $('#trim-title').textContent = j.title;
+  $('#trim-message').textContent = '';
+  $('#trim-wave-status').textContent = 'Подготавливаем звуковую волну…';
+  $('#trim-zoom').value = '1';
+  $('#trim-track').style.width = '100%';
+  $('#trim-start').value = 0;
+  $('#trim-end').value = trimDuration || 0;
+  $('#trim-dialog').showModal();
+  trimAudio.src = '/api/stream/' + j.id;
+  trimAudio.load();
+  try {
+    for (let i = 0; i < 125; i++) {
+      const w = await api('/api/wave/' + j.id);
+      if (version !== trimVersion) return;
+      if (w.status === 'error') throw new Error(w.error);
+      if (w.status === 'done') {
+        trimDuration = w.duration;
+        trimPeaks = w.peaks;
+        $('#trim-end').value = Math.min(trimEnd() || w.duration, w.duration).toFixed(2);
+        $('#trim-start').max = String(w.duration);
+        $('#trim-end').max = String(w.duration);
+        $('#trim-wave-status').textContent =
+          'Тяните края выделения. Нажмите на волну, чтобы слушать с этой точки.';
+        drawTrim();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    throw new Error(
+      'Волна строится дольше обычного. Можно слушать трек и задавать границы на шкале.',
+    );
+  } catch (e) {
+    if (version === trimVersion) $('#trim-wave-status').textContent = e.message;
+  }
+}
+trimAudio.onloadedmetadata = () => {
+  if (Number.isFinite(trimAudio.duration)) {
+    trimDuration = trimAudio.duration;
+    if (!trimEnd()) $('#trim-end').value = trimDuration.toFixed(2);
+    drawTrim();
+  }
+};
+trimAudio.ontimeupdate = () => {
+  if (rangePlayback && trimAudio.currentTime >= trimEnd()) {
+    if ($('#trim-loop').checked) trimAudio.currentTime = trimStart();
+    else trimAudio.pause();
+  }
+  drawTrim();
+};
+trimAudio.onplay = () => ($('#trim-play').textContent = 'Ⅱ Пауза');
+trimAudio.onpause = () => ($('#trim-play').textContent = '▶ Слушать');
+trimAudio.onerror = () =>
+  ($('#trim-message').textContent = 'Не удалось открыть аудио для прослушивания.');
+$('#trim-play').onclick = () => {
+  if (trimAudio.paused) {
+    rangePlayback = false;
+    trimAudio.play().catch(() => {});
+  } else trimAudio.pause();
+};
+$('#preview-trim').onclick = () => {
+  rangePlayback = true;
+  trimAudio.currentTime = trimStart();
+  trimAudio
+    .play()
+    .catch(() => ($('#trim-message').textContent = 'Не удалось начать прослушивание.'));
+};
+for (const edge of ['start', 'end'])
+  $('#mark-' + edge).onclick = () => {
+    const pos = trimAudio.currentTime;
+    if (edge === 'start') $('#trim-start').value = Math.min(pos, trimEnd() - 0.05).toFixed(2);
+    else $('#trim-end').value = Math.max(pos, trimStart() + 0.05).toFixed(2);
+    drawTrim();
+  };
+for (const edge of ['start', 'end'])
+  $('#trim-' + edge).oninput = () => {
+    let v = Number($('#trim-' + edge).value);
+    v = Math.max(0, Math.min(trimDuration, v));
+    if (edge === 'start') v = Math.min(v, trimEnd() - 0.05);
+    else v = Math.max(v, trimStart() + 0.05);
+    $('#trim-' + edge).value = v;
+    drawTrim();
+  };
+function pointerTime(event) {
+  const r = $('#trim-track').getBoundingClientRect();
+  return Math.max(0, Math.min(trimDuration, ((event.clientX - r.left) / r.width) * trimDuration));
+}
+for (const [id, edge] of [
+  ['trim-left', 'start'],
+  ['trim-right', 'end'],
+]) {
+  const h = $('#' + id);
+  let dragging = false;
+  function change(v) {
+    if (edge === 'start') v = Math.min(v, trimEnd() - 0.05);
+    else v = Math.max(v, trimStart() + 0.05);
+    $('#trim-' + edge).value = Math.max(0, Math.min(trimDuration, v)).toFixed(2);
+    drawTrim();
+  }
+  h.onpointerdown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    h.setPointerCapture(e.pointerId);
+  };
+  h.onpointermove = (e) => {
+    if (dragging) change(pointerTime(e));
+  };
+  h.onpointerup = (e) => {
+    dragging = false;
+    h.releasePointerCapture(e.pointerId);
+  };
+  h.onpointercancel = () => (dragging = false);
+  h.onkeydown = (e) => {
+    if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+      e.preventDefault();
+      change(
+        e.key === 'Home'
+          ? 0
+          : e.key === 'End'
+            ? trimDuration
+            : (edge === 'start' ? trimStart() : trimEnd()) +
+              (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : 0.1),
+      );
+    }
+  };
+}
+let trimScrubbing = false;
+const track = $('#trim-track');
+track.onpointerdown = (e) => {
+  if (e.target.closest('.trim-handle') || !trimDuration) return;
+  trimScrubbing = true;
+  track.setPointerCapture(e.pointerId);
+  rangePlayback = false;
+  trimAudio.currentTime = pointerTime(e);
+  trimAudio.play().catch(() => {});
+  drawTrim();
+};
+track.onpointermove = (e) => {
+  if (trimScrubbing) {
+    trimAudio.currentTime = pointerTime(e);
+    drawTrim();
+  }
+};
+track.onpointerup = (e) => {
+  trimScrubbing = false;
+  track.releasePointerCapture(e.pointerId);
+};
+track.onpointercancel = () => (trimScrubbing = false);
+$('#trim-zoom').onchange = () => {
+  $('#trim-track').style.width = Number($('#trim-zoom').value) * 100 + '%';
+  drawTrim();
+};
+$('#trim-dialog').addEventListener('close', () => {
+  trimVersion++;
+  trimAudio.pause();
+});
+new ResizeObserver(() => {
+  if ($('#trim-dialog').open) drawTrim();
+}).observe($('#trim-viewport'));
+function descriptionBlock(item) {
+  const details = el('details', undefined, 'video-description'),
+    summary = el('summary', 'Описание видео'),
+    body = el('div', undefined, 'description-body');
+  details.append(summary, body);
+  let loaded = false;
+  details.ontoggle = async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    body.textContent = item.description || 'Загружаем полное описание…';
+    try {
+      for (let i = 0; i < 125; i++) {
+        const r = await api('/api/description/' + item.id);
+        if (r.status === 'error') throw new Error(r.error);
+        if (r.status === 'done') {
+          body.textContent = r.description;
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new Error('Описание загружается дольше обычного.');
+    } catch (e) {
+      body.textContent = e.message;
+      const retry = el('button', 'Повторить');
+      retry.onclick = () => {
+        loaded = false;
+        details.open = false;
+        details.open = true;
+      };
+      body.append(retry);
+    }
+  };
+  return details;
+}
+const baseDiscover = renderDiscover;
+renderDiscover = function () {
+  baseDiscover();
+  const cards = $('#discover-results').children;
+  searchItems
+    .filter((item) => item.url !== onlineItem?.url)
+    .forEach((item, index) => {
+      if (item.service === 'youtube') cards[index]?.append(descriptionBlock(item));
+    });
+};
+const priorOnline = openOnline;
+openOnline = function (item) {
+  priorOnline(item);
+  $('#online-description').replaceChildren();
+  if (item.service === 'youtube') $('#online-description').append(descriptionBlock(item));
+};
 
-let metadataId,correctionId;
-const priorEditRow=row;row=j=>{const n=priorEditRow(j);if(j.status!=='done')return n;const actions=n.querySelector('.job-actions'),meta=el('button','Теги файла'),correct=el('button','Исправить BPM / ключ');meta.onclick=()=>{metadataId=j.id;$('#meta-title').value=j.track||j.title;$('#meta-artist').value=j.artist||'';$('#meta-album').value=j.album||'';$('#meta-art').value='';$('#meta-remove').checked=false;$('#meta-message').textContent='';$('#metadata-dialog').showModal();};correct.onclick=()=>{correctionId=j.id;const a=resolvedMusic(j);$('#correct-bpm').value=a.bpm||120;$('#correct-key').value=a.key||'C';$('#correct-scale').value=a.scale||'minor';$('#correct-message').textContent='';$('#correction-dialog').showModal();};actions.append(meta,correct);const old=n.querySelector('.analysis');if(old)old.remove();const a=resolvedMusic(j),area=el('div',undefined,'analysis');const labels={manual:'Вручную',description:'Из описания',algorithm:'Оценка алгоритма'};
- if(a.bpm)area.append(metric(a.bpm,'BPM · '+labels[a.bpmSource]));
- if(a.key)area.append(metric(a.key+(a.scale?' '+a.scale:''),'Тональность · '+labels[a.keySource]+(!a.scale?' · лад не указан':'')));
- const d=j.descriptionAnalysis||{};if(d.bpm||d.key){const evidence=el('small',[d.bpmEvidence,d.keyEvidence].filter(Boolean).join(' · '));evidence.title='Явно указано в описании автором записи. Данные автора могут содержать ошибку.';area.append(evidence);}
- if(d.conflicts?.length)area.append(el('small','В описании несколько значений: '+d.conflicts.map(x=>x==='bpm'?'BPM':'тональность').join(', ')+'. Автоподстановка для них отключена.'));
- if(a.bpm||a.key||d.conflicts?.length)n.append(area);
- return n;};
-for(const key of ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'])$('#correct-key').append(new Option(key,key));
-$('#meta-close').onclick=()=>$('#metadata-dialog').close();$('#correct-close').onclick=()=>$('#correction-dialog').close();
-$('#bpm-half').onclick=()=>$('#correct-bpm').value=Number($('#correct-bpm').value)/2;$('#bpm-double').onclick=()=>$('#correct-bpm').value=Number($('#correct-bpm').value)*2;
-async function saveCorrection(data){await api('/api/correct/'+correctionId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});$('#correction-dialog').close();await refresh();}
-$('#correction-form').onsubmit=async e=>{e.preventDefault();try{await saveCorrection({bpm:$('#correct-bpm').value,key:$('#correct-key').value,scale:$('#correct-scale').value});}catch(e){$('#correct-message').textContent=e.message;}};$('#correct-reset').onclick=()=>saveCorrection({reset:true}).catch(e=>$('#correct-message').textContent=e.message);
-$('#metadata-form').onsubmit=async e=>{e.preventDefault();$('#meta-save').disabled=true;$('#meta-message').textContent='Записываем файл…';try{const image=$('#meta-art').files[0];if(image&&!$('#meta-remove').checked)await api('/api/art/'+metadataId,{method:'POST',body:image});await api('/api/metadata/'+metadataId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('#meta-title').value,artist:$('#meta-artist').value,album:$('#meta-album').value,removeCover:$('#meta-remove').checked})});$('#metadata-dialog').close();await refresh();}catch(e){$('#meta-message').textContent=e.message;}finally{$('#meta-save').disabled=false;}};
-let updateState={};async function showUpdates(){if(!window.desktop?.updateState){$('#update-status').textContent='Обновления одной кнопкой доступны в EXE-версии.';$('#update-action').disabled=true;return;}updateState=await window.desktop.updateState();$('#update-status').textContent='Версия '+updateState.version+' · '+(updateState.message||updateState.status)+(updateState.percent?' '+updateState.percent+'%':'');$('#update-action').textContent=updateState.status==='ready'?'Установить и перезапустить':'Проверить обновления';$('#update-action').disabled=['development','checking','downloading'].includes(updateState.status);}
-$('#update-action').onclick=async()=>{const r=updateState.status==='ready'?await window.desktop.installUpdate():await window.desktop.checkUpdate();if(r?.error)$('#update-status').textContent=r.error;else await showUpdates();};showUpdates();setInterval(showUpdates,3000);
-
+let metadataId, correctionId;
+const priorEditRow = row;
+row = (j) => {
+  const n = priorEditRow(j);
+  if (j.status !== 'done') return n;
+  const actions = n.querySelector('.job-actions'),
+    meta = el('button', 'Теги файла'),
+    correct = el('button', 'Исправить BPM / ключ');
+  meta.onclick = () => {
+    metadataId = j.id;
+    $('#meta-title').value = j.track || j.title;
+    $('#meta-artist').value = j.artist || '';
+    $('#meta-album').value = j.album || '';
+    $('#meta-art').value = '';
+    $('#meta-remove').checked = false;
+    $('#meta-message').textContent = '';
+    $('#metadata-dialog').showModal();
+  };
+  correct.onclick = () => {
+    correctionId = j.id;
+    const a = resolvedMusic(j);
+    $('#correct-bpm').value = a.bpm || 120;
+    $('#correct-key').value = a.key || 'C';
+    $('#correct-scale').value = a.scale || 'minor';
+    $('#correct-message').textContent = '';
+    $('#correction-dialog').showModal();
+  };
+  actions.append(meta, correct);
+  const old = n.querySelector('.analysis');
+  if (old) old.remove();
+  const a = resolvedMusic(j),
+    area = el('div', undefined, 'analysis');
+  const labels = { manual: 'Вручную', description: 'Из описания', algorithm: 'Оценка алгоритма' };
+  if (a.bpm) area.append(metric(a.bpm, 'BPM · ' + labels[a.bpmSource]));
+  if (a.key)
+    area.append(
+      metric(
+        a.key + (a.scale ? ' ' + a.scale : ''),
+        'Тональность · ' + labels[a.keySource] + (!a.scale ? ' · лад не указан' : ''),
+      ),
+    );
+  const d = j.descriptionAnalysis || {};
+  if (d.bpm || d.key) {
+    const evidence = el('small', [d.bpmEvidence, d.keyEvidence].filter(Boolean).join(' · '));
+    evidence.title =
+      'Явно указано в описании автором записи. Данные автора могут содержать ошибку.';
+    area.append(evidence);
+  }
+  if (d.conflicts?.length)
+    area.append(
+      el(
+        'small',
+        'В описании несколько значений: ' +
+          d.conflicts.map((x) => (x === 'bpm' ? 'BPM' : 'тональность')).join(', ') +
+          '. Автоподстановка для них отключена.',
+      ),
+    );
+  if (a.bpm || a.key || d.conflicts?.length) n.append(area);
+  return n;
+};
+for (const key of ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'])
+  $('#correct-key').append(new Option(key, key));
+$('#meta-close').onclick = () => $('#metadata-dialog').close();
+$('#correct-close').onclick = () => $('#correction-dialog').close();
+$('#bpm-half').onclick = () => ($('#correct-bpm').value = Number($('#correct-bpm').value) / 2);
+$('#bpm-double').onclick = () => ($('#correct-bpm').value = Number($('#correct-bpm').value) * 2);
+async function saveCorrection(data) {
+  await api('/api/correct/' + correctionId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  $('#correction-dialog').close();
+  await refresh();
+}
+$('#correction-form').onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await saveCorrection({
+      bpm: $('#correct-bpm').value,
+      key: $('#correct-key').value,
+      scale: $('#correct-scale').value,
+    });
+  } catch (e) {
+    $('#correct-message').textContent = e.message;
+  }
+};
+$('#correct-reset').onclick = () =>
+  saveCorrection({ reset: true }).catch((e) => ($('#correct-message').textContent = e.message));
+$('#metadata-form').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#meta-save').disabled = true;
+  $('#meta-message').textContent = 'Записываем файл…';
+  try {
+    const image = $('#meta-art').files[0];
+    if (image && !$('#meta-remove').checked)
+      await api('/api/art/' + metadataId, { method: 'POST', body: image });
+    await api('/api/metadata/' + metadataId, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: $('#meta-title').value,
+        artist: $('#meta-artist').value,
+        album: $('#meta-album').value,
+        removeCover: $('#meta-remove').checked,
+      }),
+    });
+    $('#metadata-dialog').close();
+    await refresh();
+  } catch (e) {
+    $('#meta-message').textContent = e.message;
+  } finally {
+    $('#meta-save').disabled = false;
+  }
+};
+let updateState = {};
+async function showUpdates() {
+  if (!window.desktop?.updateState) {
+    $('#update-status').textContent = 'Обновления одной кнопкой доступны в EXE-версии.';
+    $('#update-action').disabled = true;
+    return;
+  }
+  updateState = await window.desktop.updateState();
+  $('#update-status').textContent =
+    'Версия ' +
+    updateState.version +
+    ' · ' +
+    (updateState.message || updateState.status) +
+    (updateState.percent ? ' ' + updateState.percent + '%' : '');
+  $('#update-action').textContent =
+    updateState.status === 'ready' ? 'Установить и перезапустить' : 'Проверить обновления';
+  $('#update-action').disabled = ['development', 'checking', 'downloading'].includes(
+    updateState.status,
+  );
+}
+$('#update-action').onclick = async () => {
+  const r =
+    updateState.status === 'ready'
+      ? await window.desktop.installUpdate()
+      : await window.desktop.checkUpdate();
+  if (r?.error) $('#update-status').textContent = r.error;
+  else await showUpdates();
+};
+setInterval(() => showUpdates(), 3000);
 
 // Studio design: presentation remains separate from download/audio operations.
-const studioPaths={
-search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/>',
-download:'<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
-library:'<path d="M4 4v16M9 4v16M14 4l5 16M3 4h3M8 4h3M13 4l3-1 5 16-3 1"/>',
-heart:'<path d="M20.8 4.6a5.2 5.2 0 0 0-7.3 0L12 6.1l-1.5-1.5a5.2 5.2 0 0 0-7.3 7.3L12 21l8.8-9.1a5.2 5.2 0 0 0 0-7.3Z"/>',
-coffee:'<path d="M4 8h13v7a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8Zm13 1h2a3 3 0 0 1 0 6h-2M7 2v3m4-3v3m4-3v3M2 22h18"/>',
-settings:'<path d="m9 3 1-1h4l1 3 3 1 3 1v4l-2 2v3l-2 2-3-1-3 3H8l-1-3-3-1-1-3 2-2V8l2-2 2 1Z"/><circle cx="12" cy="12" r="3"/>',
-plus:'<path d="M12 5v14M5 12h14"/>',
-close:'<path d="m6 6 12 12M6 18 18 6"/>',
-play:'<path d="m8 4 12 8-12 8Z"/>',
-pause:'<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>',
-next:'<path d="m5 4 12 8-12 8ZM19 4v16"/>',
-previous:'<path d="m19 4-12 8 12 8ZM5 4v16"/>',
-volume:'<path d="m11 4-6 5H2v6h3l6 5ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
-muted:'<path d="m11 4-6 5H2v6h3l6 5Zm5 5 6 6m-6 0 6-6"/>',
-edit:'<path d="m4 16 12-12 4 4L8 20l-5 1Zm10-10 4 4"/>',
-more:'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
-scissors:'<circle cx="5" cy="6" r="3"/><circle cx="5" cy="18" r="3"/><path d="m8 8 13 13M8 16 21 3"/>',
-external:'<path d="M14 3h7v7m0-7L10 14M10 3H4v17h17v-6"/>',
-arrow:'<path d="M4 12h16m-6-6 6 6-6 6"/>',
-clipboard:'<path d="M8 5H5v16h14V5h-3M8 3h8v4H8zM8 12h8m-8 4h6"/>',
-refresh:'<path d="M20 9a8 8 0 0 0-14-5L3 7m0-5v5h5M4 15a8 8 0 0 0 14 5l3-3m0 5v-5h-5"/>',
-folder:'<path d="M3 5h7l2 3h9v12H3z"/>',
-check:'<path d="m5 12 4 4L20 5"/>'
-};
-function studioIcon(name){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('aria-hidden','true');svg.classList.add('icon');svg.innerHTML=studioPaths[name]||studioPaths.play;return svg;}
-function paintIcons(root=document){for(const n of root.querySelectorAll('[data-icon]'))n.replaceChildren(studioIcon(n.dataset.icon));}
-function iconButton(name,label,fn){const b=el('button',undefined,'icon-button');b.type='button';b.setAttribute('aria-label',label);b.title=label;b.append(studioIcon(name));if(fn)b.onclick=fn;return b;}
+function studioIcon(name) {
+  return createIcon(name);
+}
+function paintIcons(root = document) {
+  for (const n of root.querySelectorAll('[data-icon]'))
+    n.replaceChildren(studioIcon(n.dataset.icon));
+}
+function iconButton(name, label, fn) {
+  const b = el('button', undefined, 'icon-button');
+  b.type = 'button';
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  b.append(studioIcon(name));
+  if (fn) b.onclick = fn;
+  return b;
+}
 paintIcons();
-let studioCardSignature='';let activePage='discover',inspectedId=null,inspectorSignature='',toastTimer,miniGeneration=0;
-const miniRanges=new Map(),studioWaves=new Map();
-function toast(message){$('#toast').textContent=message;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,4200);}
-function report(error){toast(error.message||String(error));}
-const previousPage=page;
-page=function(name){activePage=name;const library=name==='favorites'?'library':name;previousPage(library);document.body.dataset.page=name;document.body.classList.toggle('wide-workspace',['settings','games'].includes(name));document.body.classList.remove('inspector-drawer');$('#favorites').checked=name==='favorites';$('#library-title').textContent=name==='favorites'?'Избранное':'Библиотека';for(const b of document.querySelectorAll('button[data-page]')){const selected=b.dataset.page===name;b.classList.toggle('active',selected);if(selected)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');}$('#track-inspector').hidden=!['library','favorites'].includes(name);$('#queue-panel').hidden=['library','favorites'].includes(name);if(['library','favorites'].includes(name))render();$('#workspace').scrollTop=0;};
-function coverArt(j){const holder=el('div',undefined,'cover-art');let hash=0;for(const ch of String(j.sourceId||j.id||j.title))hash=(hash+ch.charCodeAt(0))%6;holder.classList.add('fallback-'+hash);const mark=document.createElementNS('http://www.w3.org/2000/svg','svg');mark.setAttribute('viewBox','0 0 64 48');mark.setAttribute('aria-hidden','true');mark.innerHTML='<path d="M6 9C13 9 15 35 23 35S32 9 39 9s9 20 18 13M23 35l-5 10" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>';holder.append(mark);
- if(j.cover||j.thumbnail){const image=el('img');image.src=j.thumbnail||'/api/cover/'+j.id+(j.modified?'?v='+j.modified:'');image.alt='';image.loading='lazy';image.decoding='async';image.referrerPolicy='no-referrer';image.onerror=()=>image.remove();holder.append(image);}return holder;}
-function selectTrack(j,drawer=true){inspectedId=j.id;inspectorSignature='';if(drawer)document.body.classList.add('inspector-drawer');render(); }
-function favoriteButton(j){const b=iconButton('heart',j.favorite?'Убрать из избранного':'В избранное',()=>edit(j.id,{favorite:!j.favorite}).catch(report));b.classList.toggle('is-favorite',!!j.favorite);b.setAttribute('aria-pressed',String(!!j.favorite));return b;}
-function tile(j,index){const card=el('article',undefined,'track-tile');card.dataset.id=j.id;card.classList.toggle('selected',j.id===inspectedId);card.classList.toggle('is-playing',j.id===playingId&&!audio.paused);card.style.animationDelay=Math.min(index*16,120)+'ms';
- const art=el('button',undefined,'tile-cover');art.type='button';art.setAttribute('aria-label',(j.status==='done'?'Слушать: ':'Открыть: ')+j.title);art.append(coverArt(j));const overlay=el('span',undefined,'tile-play-overlay');overlay.append(studioIcon(j.id===playingId&&!audio.paused?'pause':'play'));art.append(overlay);art.onclick=()=>{selectTrack(j);if(j.status==='done'){if(playingId===j.id&&!audio.paused)audio.pause();else playTrack(j);}};
- const info=el('div',undefined,'tile-info'),title=el('button',j.title,'tile-title');title.type='button';title.title=j.title;title.onclick=()=>selectTrack(j);info.append(title,el('small',j.duration?time(j.duration):j.format.toUpperCase()));card.append(art,info,el('span',j.artist||names[j.service]||'Аудиофайл','tile-artist'));const fav=favoriteButton(j);fav.classList.add('tile-favorite');card.append(fav);
- if(j.status!=='done')card.append(el('span',statuses[j.status],'tile-status'));return card;}
-function compactJob(j){const line=el('article',undefined,'compact-job'),art=el('div',undefined,'compact-art'),copy=el('div',undefined,'compact-copy');art.append(coverArt(j));copy.append(el('strong',j.title),el('small',j.artist||statuses[j.status]));const open=iconButton(j.status==='done'?'play':'more',j.status==='done'?'Слушать':'Подробнее',()=>{if(j.status==='done'){selectTrack(j,false);playTrack(j);}else{page('library');selectTrack(j);}});line.append(art,copy,el('small',j.duration?time(j.duration):statuses[j.status]),open);return line;}
-function emptyLibrary(favorites=false){const box=el('div',undefined,'empty');box.append(studioIcon(favorites?'heart':'library'),el('h2',favorites?'Любимые треки будут здесь':'Ваша коллекция начинается здесь'),el('p',favorites?'Нажмите на сердечко у трека, чтобы сохранить его в избранное.':'Найдите музыку или добавьте аудиофайл с компьютера.'));if(!favorites){const b=el('button','Найти музыку','primary');b.onclick=()=>page('discover');box.append(b);}return box;}
-render=function(){const q=$('#search').value.toLocaleLowerCase(),filter=$('#filter').value;let list=jobs.filter(j=>(!filter||j.service===filter)&&(!$('#favorites').checked||j.favorite)&&[j.title,j.artist,j.url,...(j.tags||[])].filter(Boolean).join(' ').toLocaleLowerCase().includes(q));list.sort($('#sort').value==='title'?(a,b)=>a.title.localeCompare(b.title,'ru'):$('#sort').value==='old'?(a,b)=>a.created-b.created:(a,b)=>b.created-a.created);
- const cardSignature=JSON.stringify([q,filter,$('#favorites').checked,list.map(j=>[j.id,j.title,j.artist,j.format,j.duration,j.cover,j.modified,j.favorite,j.status])]);if(cardSignature!==studioCardSignature){$('#jobs').replaceChildren(...(list.length?list.map(tile):[q||filter?el('div','Ничего не найдено. Попробуйте другой запрос или источник.','empty'):emptyLibrary($('#favorites').checked)]));studioCardSignature=cardSignature;}for(const card of document.querySelectorAll('.track-tile'))card.classList.toggle('selected',card.dataset.id===inspectedId);$('#library-total').textContent=String(list.length)+' '+(list.length%10===1&&list.length%100!==11?'трек':list.length%10>=2&&list.length%10<=4&&(list.length%100<12||list.length%100>14)?'трека':'треков');$('#count').textContent=jobs.filter(j=>j.status==='done').length;const recent=[...jobs].sort((a,b)=>b.created-a.created).slice(0,4);$('#recent').replaceChildren(...(recent.length?recent.map(compactJob):[el('div','Скачанные треки появятся здесь.','empty')]));renderQueue();if(!inspectedId||!jobs.some(j=>j.id===inspectedId))inspectedId=jobs.find(j=>j.status==='done')?.id;renderInspector();const playing=jobs.find(j=>j.id===playingId);if(playing)playerInfo(playing);syncPlayback();};
-$('#search').oninput=()=>render();$('#filter').onchange=()=>render();$('#favorites').onchange=()=>render();$('#sort').onchange=()=>render();for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{$('#filter').value=b.dataset.filter;for(const chip of document.querySelectorAll('[data-filter]'))chip.classList.toggle('active',chip===b);render();};
-renderQueue=function(){const pending=jobs.filter(j=>!terminal(j));$('#queue-count').textContent=pending.length;$('#queue').replaceChildren();if(!pending.length){const empty=el('div',undefined,'queue-empty');empty.append(studioIcon('download'),el('p','Очередь свободна. Найдите трек или добавьте ссылку.'));$('#queue').append(empty);const done=jobs.filter(j=>j.status==='done');if(done.length)$('#queue').append(el('p','В библиотеке: '+done.length,'queue-finished'));return;}
- for(const j of pending){const line=el('div',undefined,'queue-item'),art=el('div',undefined,'queue-art'),copy=el('div',undefined,'queue-copy');art.append(coverArt(j));copy.append(el('strong',j.title||j.url),el('small',statuses[j.status]+(j.progress?' · '+Math.round(j.progress)+'%':'')));if(j.progress){const p=el('progress');p.value=j.progress;p.max=100;copy.append(p);}const cancel=iconButton('close','Отменить загрузку',async()=>{try{await api('/api/cancel/'+j.id,{method:'POST'});await refresh();}catch(e){report(e);}});line.append(art,copy,cancel);$('#queue').append(line);}};
-function rowAction(j,label){const old=row(j);return [...old.querySelectorAll('.job-actions button')].find(b=>b.textContent===label);}
-function inspectorAction(j,label){return()=>rowAction(j,label)?.click();}
-function renderInspector(){const j=jobs.find(j=>j.id===inspectedId),panel=$('#track-inspector');const sig=JSON.stringify(j);if(sig===inspectorSignature)return;inspectorSignature=sig;miniGeneration++;const generation=miniGeneration;panel.replaceChildren();if(!j){const empty=el('div',undefined,'queue-empty');empty.append(studioIcon('library'),el('p','Выберите трек, чтобы посмотреть детали и обрезать фрагмент.'));panel.append(empty);return;}
- const heading=el('div',undefined,'panel-heading');heading.append(el('h2','Трек'),el('span',undefined,'panel-spacer'),favoriteButton(j));const menu=el('details',undefined,'track-menu'),summary=el('summary',undefined,'icon-button');summary.setAttribute('aria-label','Действия с треком');summary.title='Действия с треком';summary.append(studioIcon('more'));const content=el('div',undefined,'track-menu-content');const old=row(j);for(const action of [...old.querySelector('.job-actions').children]){if(action.classList.contains('favorite')||action.classList.contains('listen')||action.textContent==='Обрезать'||action.textContent==='Исправить BPM / ключ')continue;action.addEventListener('click',()=>menu.open=false);content.append(action);}menu.append(summary,content);heading.append(menu,iconButton('close','Закрыть панель',()=>document.body.classList.remove('inspector-drawer')));heading.lastChild.classList.add('context-close');
- const art=el('div',undefined,'inspector-art');art.append(coverArt(j));panel.append(heading,art,el('h2',j.title,'inspector-title'),el('p',j.artist||names[j.service]||'','inspector-artist'));const meta=el('div',undefined,'inspector-meta');const badge=el('span',names[j.service]||'Мой файл','source-badge');meta.append(badge,el('span',j.format.toUpperCase()+(j.quality?' · '+j.quality+(['wav','flac'].includes(j.format)?' бит':' кбит/с'):'')));panel.append(meta);
- if(j.status!=='done'){panel.append(el('p',j.error||statuses[j.status],'inspector-warning'));return;}
- const a=resolvedMusic(j),metrics=el('div',undefined,'inspector-metrics');metrics.append(metric(a.bpm||'—','BPM'),metric(a.key?(a.key+(a.scale?' '+a.scale:'')):'—','Тональность'));panel.append(metrics);const source=el('div',undefined,'metric-source'),labels={manual:'Вручную',description:'Из описания',algorithm:'Оценка алгоритма'};const descriptions=[a.bpm?labels[a.bpmSource]:null,a.key?labels[a.keySource]:null].filter(Boolean);source.append(el('span',(a.bpmSource&&a.keySource&&a.bpmSource!==a.keySource?'BPM — '+labels[a.bpmSource]+'; ключ — '+labels[a.keySource]:[...new Set(descriptions)].join(' · '))||'Ещё не определено'),iconButton('edit','Исправить BPM / ключ',inspectorAction(j,'Исправить BPM / ключ')));source.title='Данные автора и оценка алгоритма могут содержать ошибки.';panel.append(source);if(j.descriptionAnalysis?.conflicts?.length)panel.append(el('p','В описании несколько значений. Проверьте BPM и тональность вручную.','inspector-warning'));
- const actions=el('div',undefined,'inspector-actions'),listen=el('button','Слушать','primary');listen.prepend(studioIcon('play'));listen.onclick=()=>playTrack(j);const download=el('a','Сохранить','download-link');download.prepend(studioIcon('download'));download.href='/api/files/'+j.id;download.download='';actions.append(listen,download);panel.append(actions);
- const section=el('section',undefined,'inspector-section');section.append(el('h3','Фрагмент'));const wave=el('div','Подготавливаем волну…','wave-pending');section.append(wave);panel.append(section);loadMiniWave(j,wave,generation).catch(e=>{if(generation===miniGeneration)wave.textContent=e.message;});
- if(j.tags?.length){const tags=el('div',undefined,'inspector-tags');for(const t of j.tags){const b=el('button','#'+t);b.onclick=()=>{$('#search').value=t;render();};tags.append(b);}panel.append(tags);}if(j.analysisError)panel.append(el('p',j.analysisError,'inspector-warning'));if(j.exportError)panel.append(el('p',j.exportError,'inspector-warning'));if(j.coverWarning)panel.append(el('p',j.coverWarning,'inspector-warning'));
+let studioCardSignature = '';
+let activePage = 'discover',
+  inspectedId = null,
+  inspectorSignature = '',
+  toastTimer,
+  miniGeneration = 0;
+const miniRanges = new Map(),
+  studioWaves = new Map();
+function toast(message) {
+  $('#toast').textContent = message;
+  $('#toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($('#toast').hidden = true), 4200);
+}
+function report(error) {
+  toast(error.message || String(error));
+}
+const previousPage = page;
+page = function (name) {
+  activePage = name;
+  const library = name === 'favorites' ? 'library' : name;
+  previousPage(library);
+  document.body.dataset.page = name;
+  document.body.classList.toggle('wide-workspace', ['settings', 'games'].includes(name));
+  document.body.classList.remove('inspector-drawer');
+  $('#favorites').checked = name === 'favorites';
+  $('#library-title').textContent = name === 'favorites' ? 'Избранное' : 'Библиотека';
+  for (const b of document.querySelectorAll('button[data-page]')) {
+    const selected = b.dataset.page === name;
+    b.classList.toggle('active', selected);
+    if (selected) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
+  $('#track-inspector').hidden = !['library', 'favorites'].includes(name);
+  $('#queue-panel').hidden = ['library', 'favorites'].includes(name);
+  if (['library', 'favorites'].includes(name)) render();
+  $('#workspace').scrollTop = 0;
+};
+function coverArt(j) {
+  const holder = el('div', undefined, 'cover-art');
+  let hash = 0;
+  for (const ch of String(j.sourceId || j.id || j.title)) hash = (hash + ch.charCodeAt(0)) % 6;
+  holder.classList.add('fallback-' + hash);
+  const mark = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  mark.setAttribute('viewBox', '0 0 64 48');
+  mark.setAttribute('aria-hidden', 'true');
+  mark.innerHTML =
+    '<path d="M6 9C13 9 15 35 23 35S32 9 39 9s9 20 18 13M23 35l-5 10" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>';
+  holder.append(mark);
+  if (j.cover || j.thumbnail) {
+    const image = el('img');
+    image.src = j.thumbnail || '/api/cover/' + j.id + (j.modified ? '?v=' + j.modified : '');
+    image.alt = '';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.referrerPolicy = 'no-referrer';
+    image.onerror = () => image.remove();
+    holder.append(image);
+  }
+  return holder;
+}
+function selectTrack(j, drawer = true) {
+  inspectedId = j.id;
+  inspectorSignature = '';
+  if (drawer) document.body.classList.add('inspector-drawer');
+  render();
+}
+function favoriteButton(j) {
+  const b = iconButton('heart', j.favorite ? 'Убрать из избранного' : 'В избранное', () =>
+    edit(j.id, { favorite: !j.favorite }).catch(report),
+  );
+  b.classList.toggle('is-favorite', !!j.favorite);
+  b.setAttribute('aria-pressed', String(!!j.favorite));
+  return b;
+}
+function tile(j, index) {
+  const card = el('article', undefined, 'track-tile');
+  card.dataset.id = j.id;
+  card.classList.toggle('selected', j.id === inspectedId);
+  card.classList.toggle('is-playing', j.id === playingId && !audio.paused);
+  card.style.animationDelay = Math.min(index * 16, 120) + 'ms';
+  const art = el('button', undefined, 'tile-cover');
+  art.type = 'button';
+  art.setAttribute('aria-label', (j.status === 'done' ? 'Слушать: ' : 'Открыть: ') + j.title);
+  art.append(coverArt(j));
+  const overlay = el('span', undefined, 'tile-play-overlay');
+  overlay.append(studioIcon(j.id === playingId && !audio.paused ? 'pause' : 'play'));
+  art.append(overlay);
+  art.onclick = () => {
+    selectTrack(j);
+    if (j.status === 'done') {
+      if (playingId === j.id && !audio.paused) audio.pause();
+      else playTrack(j);
+    }
+  };
+  const info = el('div', undefined, 'tile-info'),
+    title = el('button', j.title, 'tile-title');
+  title.type = 'button';
+  title.title = j.title;
+  title.onclick = () => selectTrack(j);
+  info.append(title, el('small', j.duration ? time(j.duration) : j.format.toUpperCase()));
+  card.append(art, info, el('span', j.artist || names[j.service] || 'Аудиофайл', 'tile-artist'));
+  const fav = favoriteButton(j);
+  fav.classList.add('tile-favorite');
+  card.append(fav);
+  if (j.status !== 'done') card.append(el('span', statuses[j.status], 'tile-status'));
+  return card;
+}
+function compactJob(j) {
+  const line = el('article', undefined, 'compact-job'),
+    art = el('div', undefined, 'compact-art'),
+    copy = el('div', undefined, 'compact-copy');
+  art.append(coverArt(j));
+  copy.append(el('strong', j.title), el('small', j.artist || statuses[j.status]));
+  const open = iconButton(
+    j.status === 'done' ? 'play' : 'more',
+    j.status === 'done' ? 'Слушать' : 'Подробнее',
+    () => {
+      if (j.status === 'done') {
+        selectTrack(j, false);
+        playTrack(j);
+      } else {
+        page('library');
+        selectTrack(j);
+      }
+    },
+  );
+  line.append(art, copy, el('small', j.duration ? time(j.duration) : statuses[j.status]), open);
+  return line;
+}
+function emptyLibrary(favorites = false) {
+  const box = el('div', undefined, 'empty');
+  box.append(
+    studioIcon(favorites ? 'heart' : 'library'),
+    el('h2', favorites ? 'Любимые треки будут здесь' : 'Ваша коллекция начинается здесь'),
+    el(
+      'p',
+      favorites
+        ? 'Нажмите на сердечко у трека, чтобы сохранить его в избранное.'
+        : 'Найдите музыку или добавьте аудиофайл с компьютера.',
+    ),
+  );
+  if (!favorites) {
+    const b = el('button', 'Найти музыку', 'primary');
+    b.onclick = () => page('discover');
+    box.append(b);
+  }
+  return box;
+}
+render = function () {
+  const q = $('#search').value.toLocaleLowerCase(),
+    filter = $('#filter').value;
+  let list = jobs.filter(
+    (j) =>
+      (!filter || j.service === filter) &&
+      (!$('#favorites').checked || j.favorite) &&
+      [j.title, j.artist, j.url, ...(j.tags || [])]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(q),
+  );
+  list.sort(
+    $('#sort').value === 'title'
+      ? (a, b) => a.title.localeCompare(b.title, 'ru')
+      : $('#sort').value === 'old'
+        ? (a, b) => a.created - b.created
+        : (a, b) => b.created - a.created,
+  );
+  const cardSignature = JSON.stringify([
+    q,
+    filter,
+    $('#favorites').checked,
+    list.map((j) => [
+      j.id,
+      j.title,
+      j.artist,
+      j.format,
+      j.duration,
+      j.cover,
+      j.modified,
+      j.favorite,
+      j.status,
+    ]),
+  ]);
+  if (cardSignature !== studioCardSignature) {
+    $('#jobs').replaceChildren(
+      ...(list.length
+        ? list.map(tile)
+        : [
+            q || filter
+              ? el('div', 'Ничего не найдено. Попробуйте другой запрос или источник.', 'empty')
+              : emptyLibrary($('#favorites').checked),
+          ]),
+    );
+    studioCardSignature = cardSignature;
+  }
+  for (const card of document.querySelectorAll('.track-tile'))
+    card.classList.toggle('selected', card.dataset.id === inspectedId);
+  $('#library-total').textContent =
+    String(list.length) +
+    ' ' +
+    (list.length % 10 === 1 && list.length % 100 !== 11
+      ? 'трек'
+      : list.length % 10 >= 2 &&
+          list.length % 10 <= 4 &&
+          (list.length % 100 < 12 || list.length % 100 > 14)
+        ? 'трека'
+        : 'треков');
+  $('#count').textContent = jobs.filter((j) => j.status === 'done').length;
+  const recent = [...jobs].sort((a, b) => b.created - a.created).slice(0, 4);
+  $('#recent').replaceChildren(
+    ...(recent.length
+      ? recent.map(compactJob)
+      : [el('div', 'Скачанные треки появятся здесь.', 'empty')]),
+  );
+  renderQueue();
+  if (!inspectedId || !jobs.some((j) => j.id === inspectedId))
+    inspectedId = jobs.find((j) => j.status === 'done')?.id;
+  renderInspector();
+  const playing = jobs.find((j) => j.id === playingId);
+  if (playing) playerInfo(playing);
+  syncPlayback();
+};
+$('#search').oninput = () => render();
+$('#filter').onchange = () => render();
+$('#favorites').onchange = () => render();
+$('#sort').onchange = () => render();
+for (const b of document.querySelectorAll('[data-filter]'))
+  b.onclick = () => {
+    $('#filter').value = b.dataset.filter;
+    for (const chip of document.querySelectorAll('[data-filter]'))
+      chip.classList.toggle('active', chip === b);
+    render();
+  };
+renderQueue = function () {
+  const pending = jobs.filter((j) => !terminal(j));
+  $('#queue-count').textContent = pending.length;
+  $('#queue').replaceChildren();
+  if (!pending.length) {
+    const empty = el('div', undefined, 'queue-empty');
+    empty.append(
+      studioIcon('download'),
+      el('p', 'Очередь свободна. Найдите трек или добавьте ссылку.'),
+    );
+    $('#queue').append(empty);
+    const done = jobs.filter((j) => j.status === 'done');
+    if (done.length) $('#queue').append(el('p', 'В библиотеке: ' + done.length, 'queue-finished'));
+    return;
+  }
+  for (const j of pending) {
+    const line = el('div', undefined, 'queue-item'),
+      art = el('div', undefined, 'queue-art'),
+      copy = el('div', undefined, 'queue-copy');
+    art.append(coverArt(j));
+    copy.append(
+      el('strong', j.title || j.url),
+      el('small', statuses[j.status] + (j.progress ? ' · ' + Math.round(j.progress) + '%' : '')),
+    );
+    if (j.progress) {
+      const p = el('progress');
+      p.value = j.progress;
+      p.max = 100;
+      copy.append(p);
+    }
+    const cancel = iconButton('close', 'Отменить загрузку', async () => {
+      try {
+        await api('/api/cancel/' + j.id, { method: 'POST' });
+        await refresh();
+      } catch (e) {
+        report(e);
+      }
+    });
+    line.append(art, copy, cancel);
+    $('#queue').append(line);
+  }
+};
+function rowAction(j, label) {
+  const old = row(j);
+  return [...old.querySelectorAll('.job-actions button')].find((b) => b.textContent === label);
+}
+function inspectorAction(j, label) {
+  return () => rowAction(j, label)?.click();
+}
+function renderInspector() {
+  const j = jobs.find((j) => j.id === inspectedId),
+    panel = $('#track-inspector');
+  const sig = JSON.stringify(j);
+  if (sig === inspectorSignature) return;
+  inspectorSignature = sig;
+  miniGeneration++;
+  const generation = miniGeneration;
+  panel.replaceChildren();
+  if (!j) {
+    const empty = el('div', undefined, 'queue-empty');
+    empty.append(
+      studioIcon('library'),
+      el('p', 'Выберите трек, чтобы посмотреть детали и обрезать фрагмент.'),
+    );
+    panel.append(empty);
+    return;
+  }
+  const heading = el('div', undefined, 'panel-heading');
+  heading.append(el('h2', 'Трек'), el('span', undefined, 'panel-spacer'), favoriteButton(j));
+  const menu = el('details', undefined, 'track-menu'),
+    summary = el('summary', undefined, 'icon-button');
+  summary.setAttribute('aria-label', 'Действия с треком');
+  summary.title = 'Действия с треком';
+  summary.append(studioIcon('more'));
+  const content = el('div', undefined, 'track-menu-content');
+  const old = row(j);
+  for (const action of [...old.querySelector('.job-actions').children]) {
+    if (
+      action.classList.contains('favorite') ||
+      action.classList.contains('listen') ||
+      action.textContent === 'Обрезать' ||
+      action.textContent === 'Исправить BPM / ключ'
+    )
+      continue;
+    action.addEventListener('click', () => (menu.open = false));
+    content.append(action);
+  }
+  menu.append(summary, content);
+  heading.append(
+    menu,
+    iconButton('close', 'Закрыть панель', () => document.body.classList.remove('inspector-drawer')),
+  );
+  heading.lastChild.classList.add('context-close');
+  const art = el('div', undefined, 'inspector-art');
+  art.append(coverArt(j));
+  panel.append(
+    heading,
+    art,
+    el('h2', j.title, 'inspector-title'),
+    el('p', j.artist || names[j.service] || '', 'inspector-artist'),
+  );
+  const meta = el('div', undefined, 'inspector-meta');
+  const badge = el('span', names[j.service] || 'Мой файл', 'source-badge');
+  meta.append(
+    badge,
+    el(
+      'span',
+      j.format.toUpperCase() +
+        (j.quality
+          ? ' · ' + j.quality + (['wav', 'flac'].includes(j.format) ? ' бит' : ' кбит/с')
+          : ''),
+    ),
+  );
+  panel.append(meta);
+  if (j.status !== 'done') {
+    panel.append(el('p', j.error || statuses[j.status], 'inspector-warning'));
+    return;
+  }
+  const a = resolvedMusic(j),
+    metrics = el('div', undefined, 'inspector-metrics');
+  metrics.append(
+    metric(a.bpm || '—', 'BPM'),
+    metric(a.key ? a.key + (a.scale ? ' ' + a.scale : '') : '—', 'Тональность'),
+  );
+  panel.append(metrics);
+  const source = el('div', undefined, 'metric-source'),
+    labels = { manual: 'Вручную', description: 'Из описания', algorithm: 'Оценка алгоритма' };
+  const descriptions = [
+    a.bpm ? labels[a.bpmSource] : null,
+    a.key ? labels[a.keySource] : null,
+  ].filter(Boolean);
+  source.append(
+    el(
+      'span',
+      (a.bpmSource && a.keySource && a.bpmSource !== a.keySource
+        ? 'BPM — ' + labels[a.bpmSource] + '; ключ — ' + labels[a.keySource]
+        : [...new Set(descriptions)].join(' · ')) || 'Ещё не определено',
+    ),
+    iconButton('edit', 'Исправить BPM / ключ', inspectorAction(j, 'Исправить BPM / ключ')),
+  );
+  source.title = 'Данные автора и оценка алгоритма могут содержать ошибки.';
+  panel.append(source);
+  if (j.descriptionAnalysis?.conflicts?.length)
+    panel.append(
+      el(
+        'p',
+        'В описании несколько значений. Проверьте BPM и тональность вручную.',
+        'inspector-warning',
+      ),
+    );
+  const actions = el('div', undefined, 'inspector-actions'),
+    listen = el('button', 'Слушать', 'primary');
+  listen.prepend(studioIcon('play'));
+  listen.onclick = () => playTrack(j);
+  const download = el('a', 'Сохранить', 'download-link');
+  download.prepend(studioIcon('download'));
+  download.href = '/api/files/' + j.id;
+  download.download = '';
+  actions.append(listen, download);
+  panel.append(actions);
+  const section = el('section', undefined, 'inspector-section');
+  section.append(el('h3', 'Фрагмент'));
+  const wave = el('div', 'Подготавливаем волну…', 'wave-pending');
+  section.append(wave);
+  panel.append(section);
+  loadMiniWave(j, wave, generation).catch((e) => {
+    if (generation === miniGeneration) wave.textContent = e.message;
+  });
+  if (j.tags?.length) {
+    const tags = el('div', undefined, 'inspector-tags');
+    for (const t of j.tags) {
+      const b = el('button', '#' + t);
+      b.onclick = () => {
+        $('#search').value = t;
+        render();
+      };
+      tags.append(b);
+    }
+    panel.append(tags);
+  }
+  if (j.analysisError) panel.append(el('p', j.analysisError, 'inspector-warning'));
+  if (j.exportError) panel.append(el('p', j.exportError, 'inspector-warning'));
+  if (j.coverWarning) panel.append(el('p', j.coverWarning, 'inspector-warning'));
 }
 
-async function loadMiniWave(j,target,generation){let data=studioWaves.get(j.id);if(!data){for(let n=0;n<125;n++){data=await api('/api/wave/'+j.id);if(generation!==miniGeneration)return;if(data.status==='done'){studioWaves.set(j.id,data);break;}if(data.status==='error')throw Error(data.error);await new Promise(r=>setTimeout(r,500));}}if(generation!==miniGeneration)return;if(data.status!=='done')throw Error('Волна ещё строится. Откройте редактор фрагмента.');
- const length=data.duration;let range=miniRanges.get(j.id)||{start:0,end:length};miniRanges.set(j.id,range);target.textContent='';target.className='';const wave=el('div',undefined,'mini-wave'),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 240 65');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');for(let i=0;i<100;i++){const p=data.peaks[Math.floor(i/100*data.peaks.length)]||0,h=Math.max(2,p*54),line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('x1',String(i*2.4));line.setAttribute('x2',String(i*2.4));line.setAttribute('y1',String(32.5-h/2));line.setAttribute('y2',String(32.5+h/2));svg.append(line);}wave.append(svg);const selection=el('div',undefined,'mini-selection'),left=el('button',undefined,'mini-handle'),right=el('button',undefined,'mini-handle');for(const [h,label]of [[left,'Начало фрагмента'],[right,'Конец фрагмента']]){h.type='button';h.setAttribute('role','slider');h.setAttribute('aria-label',label);h.setAttribute('aria-valuemin','0');h.setAttribute('aria-valuemax',String(length));}wave.append(selection,left,right);const times=el('div',undefined,'mini-times'),start=el('span'),end=el('span');times.append(start,end);
- function update(){selection.style.left=range.start/length*100+'%';selection.style.width=(range.end-range.start)/length*100+'%';left.style.left=range.start/length*100+'%';right.style.left=range.end/length*100+'%';start.textContent=time(range.start);end.textContent=time(range.end);left.setAttribute('aria-valuenow',range.start.toFixed(2));right.setAttribute('aria-valuenow',range.end.toFixed(2));left.setAttribute('aria-valuetext',time(range.start));right.setAttribute('aria-valuetext',time(range.end));}
- for(const [handle,edge]of [[left,'start'],[right,'end']]){let drag=false;function set(v){range[edge]=Math.max(edge==='end'?range.start+.05:0,Math.min(edge==='start'?range.end-.05:length,v));update();}handle.onpointerdown=e=>{e.stopPropagation();e.preventDefault();drag=true;handle.setPointerCapture(e.pointerId);};handle.onpointermove=e=>{if(drag){const r=wave.getBoundingClientRect();set((e.clientX-r.left)/r.width*length);}};handle.onpointerup=e=>{drag=false;handle.releasePointerCapture(e.pointerId);};handle.onpointercancel=()=>drag=false;handle.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();set(e.key==='Home'?0:e.key==='End'?length:range[edge]+(e.key==='ArrowRight'?1:-1)*(e.shiftKey?5:.1));}};}
- wave.onpointerdown=async e=>{if(e.target.closest('.mini-handle'))return;const r=wave.getBoundingClientRect(),position=Math.max(0,Math.min(length,(e.clientX-r.left)/r.width*length));await playTrack(j);if(audio.readyState<1)await new Promise(resolve=>audio.addEventListener('loadedmetadata',resolve,{once:true}));audio.currentTime=position;};
- const trim=el('button','Обрезать','primary mini-trim');trim.prepend(studioIcon('scissors'));trim.onclick=async()=>{await openTrim(j);$('#trim-start').value=range.start.toFixed(2);$('#trim-end').value=range.end.toFixed(2);drawTrim();};target.append(wave,times,trim);update();
+async function loadMiniWave(j, target, generation) {
+  let data = studioWaves.get(j.id);
+  if (!data) {
+    for (let n = 0; n < 125; n++) {
+      data = await api('/api/wave/' + j.id);
+      if (generation !== miniGeneration) return;
+      if (data.status === 'done') {
+        studioWaves.set(j.id, data);
+        break;
+      }
+      if (data.status === 'error') throw Error(data.error);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  if (generation !== miniGeneration) return;
+  if (data.status !== 'done') throw Error('Волна ещё строится. Откройте редактор фрагмента.');
+  const length = data.duration;
+  let range = miniRanges.get(j.id) || { start: 0, end: length };
+  miniRanges.set(j.id, range);
+  target.textContent = '';
+  target.className = '';
+  const wave = el('div', undefined, 'mini-wave'),
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 240 65');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < 100; i++) {
+    const p = data.peaks[Math.floor((i / 100) * data.peaks.length)] || 0,
+      h = Math.max(2, p * 54),
+      line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', String(i * 2.4));
+    line.setAttribute('x2', String(i * 2.4));
+    line.setAttribute('y1', String(32.5 - h / 2));
+    line.setAttribute('y2', String(32.5 + h / 2));
+    svg.append(line);
+  }
+  wave.append(svg);
+  const selection = el('div', undefined, 'mini-selection'),
+    left = el('button', undefined, 'mini-handle'),
+    right = el('button', undefined, 'mini-handle');
+  for (const [h, label] of [
+    [left, 'Начало фрагмента'],
+    [right, 'Конец фрагмента'],
+  ]) {
+    h.type = 'button';
+    h.setAttribute('role', 'slider');
+    h.setAttribute('aria-label', label);
+    h.setAttribute('aria-valuemin', '0');
+    h.setAttribute('aria-valuemax', String(length));
+  }
+  wave.append(selection, left, right);
+  const times = el('div', undefined, 'mini-times'),
+    start = el('span'),
+    end = el('span');
+  times.append(start, end);
+  function update() {
+    selection.style.left = (range.start / length) * 100 + '%';
+    selection.style.width = ((range.end - range.start) / length) * 100 + '%';
+    left.style.left = (range.start / length) * 100 + '%';
+    right.style.left = (range.end / length) * 100 + '%';
+    start.textContent = time(range.start);
+    end.textContent = time(range.end);
+    left.setAttribute('aria-valuenow', range.start.toFixed(2));
+    right.setAttribute('aria-valuenow', range.end.toFixed(2));
+    left.setAttribute('aria-valuetext', time(range.start));
+    right.setAttribute('aria-valuetext', time(range.end));
+  }
+  for (const [handle, edge] of [
+    [left, 'start'],
+    [right, 'end'],
+  ]) {
+    let drag = false;
+    function set(v) {
+      range[edge] = Math.max(
+        edge === 'end' ? range.start + 0.05 : 0,
+        Math.min(edge === 'start' ? range.end - 0.05 : length, v),
+      );
+      update();
+    }
+    handle.onpointerdown = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      drag = true;
+      handle.setPointerCapture(e.pointerId);
+    };
+    handle.onpointermove = (e) => {
+      if (drag) {
+        const r = wave.getBoundingClientRect();
+        set(((e.clientX - r.left) / r.width) * length);
+      }
+    };
+    handle.onpointerup = (e) => {
+      drag = false;
+      handle.releasePointerCapture(e.pointerId);
+    };
+    handle.onpointercancel = () => (drag = false);
+    handle.onkeydown = (e) => {
+      if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+        e.preventDefault();
+        set(
+          e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? length
+              : range[edge] + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 5 : 0.1),
+        );
+      }
+    };
+  }
+  wave.onpointerdown = async (e) => {
+    if (e.target.closest('.mini-handle')) return;
+    const r = wave.getBoundingClientRect(),
+      position = Math.max(0, Math.min(length, ((e.clientX - r.left) / r.width) * length));
+    await playTrack(j);
+    if (audio.readyState < 1)
+      await new Promise((resolve) =>
+        audio.addEventListener('loadedmetadata', resolve, { once: true }),
+      );
+    audio.currentTime = position;
+  };
+  const trim = el('button', 'Обрезать', 'primary mini-trim');
+  trim.prepend(studioIcon('scissors'));
+  trim.onclick = async () => {
+    await openTrim(j);
+    $('#trim-start').value = range.start.toFixed(2);
+    $('#trim-end').value = range.end.toFixed(2);
+    drawTrim();
+  };
+  target.append(wave, times, trim);
+  update();
 }
-const studioPlayerInfo=playerInfo;
-playerInfo=function(j){studioPlayerInfo(j);$('#player-art').replaceChildren(coverArt(j));$('#player-favorite').replaceChildren(studioIcon('heart'));$('#player-favorite').classList.toggle('is-favorite',!!j.favorite);$('#player').classList.remove('is-empty');for(const c of document.querySelectorAll('#player .player-center button,#player #seek'))c.disabled=false;};
-function syncPlayback(){const empty=!playingId;$('#player').classList.toggle('is-empty',empty);$('#play-pause').replaceChildren(studioIcon(audio.paused?'play':'pause'));$('#play-pause').setAttribute('aria-label',audio.paused?'Воспроизвести':'Пауза');for(const tile of document.querySelectorAll('.track-tile')){const playing=tile.dataset.id===playingId&&!audio.paused;tile.classList.toggle('is-playing',playing);const overlay=tile.querySelector('.tile-play-overlay');if(overlay)overlay.replaceChildren(studioIcon(playing?'pause':'play'));}$('#mute').replaceChildren(studioIcon(audio.muted?'muted':'volume'));}
-audio.onplay=syncPlayback;audio.onpause=syncPlayback;audio.addEventListener('timeupdate',()=>{$('#seek').style.setProperty('--range-fill',(audio.duration?audio.currentTime/audio.duration*100:0)+'%');});audio.addEventListener('loadedmetadata',syncPlayback);
-$('#previous').replaceChildren(studioIcon('previous'));$('#next').replaceChildren(studioIcon('next'));$('#player-trim').replaceChildren(studioIcon('scissors'));$('#player-trim').title='Обрезать трек';$('#player-trim').setAttribute('aria-label','Обрезать трек');$('#player-art').replaceChildren(coverArt({id:'idle'}));$('#player-favorite').replaceChildren(studioIcon('heart'));for(const c of document.querySelectorAll('#player .player-center button,#player #seek'))c.disabled=true;
-const studioMute=$('#mute').onclick;$('#mute').onclick=()=>{studioMute();syncPlayback();};
-$('#volume').oninput=()=>{audio.volume=Number($('#volume').value);audio.muted=false;localStorage.setItem('volume',audio.volume);$('#volume').style.setProperty('--range-fill',audio.volume*100+'%');syncPlayback();};$('#volume').style.setProperty('--range-fill',audio.volume*100+'%');syncPlayback();
-renderDiscover=function(){const list=$('#discover-results');list.replaceChildren();const visible=searchItems.filter(item=>item.url!==onlineItem?.url);for(const item of visible){const card=el('article',undefined,'search-card'),visual=el('button',undefined,'result-visual');visual.type='button';visual.setAttribute('aria-label','Слушать: '+item.title);visual.append(coverArt(item));const overlay=el('span',undefined,'result-play');overlay.append(studioIcon('play'));visual.append(overlay);visual.onclick=()=>openOnline(item);const body=el('div',undefined,'result-body');body.append(el('h2',item.title),el('p',item.artist),el('small',(item.duration?time(item.duration):'')+(item.views!==null?' · '+new Intl.NumberFormat('ru-RU',{notation:'compact'}).format(item.views)+' просм.':'')));const actions=el('div',undefined,'result-actions'),download=iconButton('plus','Добавить в очередь',null),external=iconButton('external','Открыть оригинал',()=>openOriginal(item));download.classList.add('result-download');external.classList.add('external-result');download.onclick=()=>queueResult(item,download);actions.append(download,external);card.append(visual,body,actions);body.ondblclick=()=>openOnline(item);list.append(card);}if(!visible.length&&!onlineItem)list.append(el('div','Ничего не найдено. Попробуйте другой запрос.','empty'));};
-queueResult=async function(item,button,force=false){button.disabled=true;try{await api('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:item.url,service:item.service,format:$('#discover-format').value,quality:$('#discover-quality').value,force})});if(button.id==='online-download')button.textContent='В очереди';else{button.replaceChildren(studioIcon('check'));button.classList.add('queued');button.title='Добавлено в очередь';button.setAttribute('aria-label','Добавлено в очередь');}$('#discover-message').textContent='Добавлено: '+item.title;toast('Трек добавлен в очередь');await refresh();}catch(e){button.disabled=false;if(e.data?.duplicateId){button.replaceChildren(studioIcon('refresh'));button.title='Уже есть · скачать ещё раз';button.setAttribute('aria-label','Уже есть · скачать ещё раз');button.onclick=()=>queueResult(item,button,true);toast('Этот трек уже есть. Нажмите ещё раз, чтобы скачать повторно.');}else report(e);}};
-const studioOpenOnline=openOnline;
-openOnline=function(item){studioOpenOnline(item);$('#online-download').disabled=false;$('#online-download').textContent='В очередь';$('#online-original').replaceChildren(studioIcon('external'));if(item.service==='soundcloud'&&item.description){const details=el('details',undefined,'video-description');details.append(el('summary','Описание трека'),el('div',item.description,'description-body'));$('#online-description').replaceChildren(details);}$('#workspace').scrollTo({top:0,behavior:'smooth'});};
-const studioSearch=searchOnline;
-searchOnline=async function(more=false){if($('#discover-query').value.trim().length<2)return;if(!more){const list=$('#discover-results');list.replaceChildren();for(let n=0;n<4;n++)list.append(el('div',undefined,'search-skeleton'));}const result=await studioSearch(more);if(!searchBusy&&searchItems.length===0&&$('#discover-message').textContent)$('#discover-results').replaceChildren();return result;};
-const studioButton=button;button=function(){studioButton();$('#submit').textContent='В очередь';};
-const studioSource=source;source=function(value){studioSource(value);$('#tagline').textContent=value==='soundcloud'?'Треки SoundCloud — в вашу библиотеку.':'Видео, Shorts и записи эфиров — в вашу библиотеку.';};
-const studioUpdates=showUpdates;showUpdates=async function(){await studioUpdates();$('#update-dot').hidden=updateState.status!=='ready';};
-setInterval(()=>$('#update-dot').hidden=updateState.status!=='ready',3000);
-document.addEventListener('click',e=>{for(const menu of document.querySelectorAll('.track-menu[open]'))if(!menu.contains(e.target))menu.open=false;});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')document.body.classList.remove('inspector-drawer');if(e.code==='Space'&&!['INPUT','TEXTAREA','SELECT','BUTTON'].includes(document.activeElement?.tagName)&&!document.querySelector('dialog[open]')&&activePage!=='games'&&playingId){e.preventDefault();audio.paused?audio.play().catch(report):audio.pause();}});
-window.addEventListener('yoump3-ready',e=>toast('Готово: '+e.detail));
-page('discover');
+const studioPlayerInfo = playerInfo;
+playerInfo = function (j) {
+  studioPlayerInfo(j);
+  $('#player-art').replaceChildren(coverArt(j));
+  $('#player-favorite').replaceChildren(studioIcon('heart'));
+  $('#player-favorite').classList.toggle('is-favorite', !!j.favorite);
+  $('#player').classList.remove('is-empty');
+  for (const c of document.querySelectorAll('#player .player-center button,#player #seek'))
+    c.disabled = false;
+};
+function syncPlayback() {
+  const empty = !playingId;
+  $('#player').classList.toggle('is-empty', empty);
+  $('#play-pause').replaceChildren(studioIcon(audio.paused ? 'play' : 'pause'));
+  $('#play-pause').setAttribute('aria-label', audio.paused ? 'Воспроизвести' : 'Пауза');
+  for (const tile of document.querySelectorAll('.track-tile')) {
+    const playing = tile.dataset.id === playingId && !audio.paused;
+    tile.classList.toggle('is-playing', playing);
+    const overlay = tile.querySelector('.tile-play-overlay');
+    if (overlay) overlay.replaceChildren(studioIcon(playing ? 'pause' : 'play'));
+  }
+  $('#mute').replaceChildren(studioIcon(audio.muted ? 'muted' : 'volume'));
+}
+audio.onplay = syncPlayback;
+audio.onpause = syncPlayback;
+audio.addEventListener('timeupdate', () => {
+  $('#seek').style.setProperty(
+    '--range-fill',
+    (audio.duration ? (audio.currentTime / audio.duration) * 100 : 0) + '%',
+  );
+});
+audio.addEventListener('loadedmetadata', () => syncPlayback());
+$('#previous').replaceChildren(studioIcon('previous'));
+$('#next').replaceChildren(studioIcon('next'));
+$('#player-trim').replaceChildren(studioIcon('scissors'));
+$('#player-trim').title = 'Обрезать трек';
+$('#player-trim').setAttribute('aria-label', 'Обрезать трек');
+$('#player-art').replaceChildren(coverArt({ id: 'idle' }));
+$('#player-favorite').replaceChildren(studioIcon('heart'));
+for (const c of document.querySelectorAll('#player .player-center button,#player #seek'))
+  c.disabled = true;
+const studioMute = $('#mute').onclick;
+$('#mute').onclick = () => {
+  studioMute();
+  syncPlayback();
+};
+$('#volume').oninput = () => {
+  audio.volume = Number($('#volume').value);
+  audio.muted = false;
+  localStorage.setItem('volume', audio.volume);
+  $('#volume').style.setProperty('--range-fill', audio.volume * 100 + '%');
+  syncPlayback();
+};
+$('#volume').style.setProperty('--range-fill', audio.volume * 100 + '%');
+syncPlayback();
+renderDiscover = function () {
+  const list = $('#discover-results');
+  list.replaceChildren();
+  const visible = searchItems.filter((item) => item.url !== onlineItem?.url);
+  for (const item of visible) {
+    const card = el('article', undefined, 'search-card'),
+      visual = el('button', undefined, 'result-visual');
+    visual.type = 'button';
+    visual.setAttribute('aria-label', 'Слушать: ' + item.title);
+    visual.append(coverArt(item));
+    const overlay = el('span', undefined, 'result-play');
+    overlay.append(studioIcon('play'));
+    visual.append(overlay);
+    visual.onclick = () => openOnline(item);
+    const body = el('div', undefined, 'result-body');
+    body.append(
+      el('h2', item.title),
+      el('p', item.artist),
+      el(
+        'small',
+        (item.duration ? time(item.duration) : '') +
+          (item.views !== null
+            ? ' · ' +
+              new Intl.NumberFormat('ru-RU', { notation: 'compact' }).format(item.views) +
+              ' просм.'
+            : ''),
+      ),
+    );
+    const actions = el('div', undefined, 'result-actions'),
+      download = iconButton('plus', 'Добавить в очередь', null),
+      external = iconButton('external', 'Открыть оригинал', () => openOriginal(item));
+    download.classList.add('result-download');
+    external.classList.add('external-result');
+    download.onclick = () => queueResult(item, download);
+    actions.append(download, external);
+    card.append(visual, body, actions);
+    body.ondblclick = () => openOnline(item);
+    list.append(card);
+  }
+  if (!visible.length && !onlineItem)
+    list.append(el('div', 'Ничего не найдено. Попробуйте другой запрос.', 'empty'));
+};
+queueResult = async function (item, button, force = false) {
+  button.disabled = true;
+  try {
+    await api('/api/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: item.url,
+        service: item.service,
+        format: $('#discover-format').value,
+        quality: $('#discover-quality').value,
+        force,
+      }),
+    });
+    if (button.id === 'online-download') button.textContent = 'В очереди';
+    else {
+      button.replaceChildren(studioIcon('check'));
+      button.classList.add('queued');
+      button.title = 'Добавлено в очередь';
+      button.setAttribute('aria-label', 'Добавлено в очередь');
+    }
+    $('#discover-message').textContent = 'Добавлено: ' + item.title;
+    toast('Трек добавлен в очередь');
+    await refresh();
+  } catch (e) {
+    button.disabled = false;
+    if (e.data?.duplicateId) {
+      button.replaceChildren(studioIcon('refresh'));
+      button.title = 'Уже есть · скачать ещё раз';
+      button.setAttribute('aria-label', 'Уже есть · скачать ещё раз');
+      button.onclick = () => queueResult(item, button, true);
+      toast('Этот трек уже есть. Нажмите ещё раз, чтобы скачать повторно.');
+    } else report(e);
+  }
+};
+const studioOpenOnline = openOnline;
+openOnline = function (item) {
+  studioOpenOnline(item);
+  $('#online-download').disabled = false;
+  $('#online-download').textContent = 'В очередь';
+  $('#online-original').replaceChildren(studioIcon('external'));
+  if (item.service === 'soundcloud' && item.description) {
+    const details = el('details', undefined, 'video-description');
+    details.append(
+      el('summary', 'Описание трека'),
+      el('div', item.description, 'description-body'),
+    );
+    $('#online-description').replaceChildren(details);
+  }
+  $('#workspace').scrollTo({ top: 0, behavior: 'smooth' });
+};
+const studioSearch = searchOnline;
+searchOnline = async function (more = false) {
+  if ($('#discover-query').value.trim().length < 2) return;
+  if (!more) {
+    const list = $('#discover-results');
+    list.replaceChildren();
+    for (let n = 0; n < 4; n++) list.append(el('div', undefined, 'search-skeleton'));
+  }
+  const result = await studioSearch(more);
+  if (!searchBusy && searchItems.length === 0 && $('#discover-message').textContent)
+    $('#discover-results').replaceChildren();
+  return result;
+};
+const studioButton = button;
+button = function () {
+  studioButton();
+  $('#submit').textContent = 'В очередь';
+};
+const sourceDrafts = { youtube: '', soundcloud: '' };
+const studioSource = source;
+source = function (value) {
+  sourceDrafts[service] = $('#url').value;
+  studioSource(value);
+  $('#url').value = sourceDrafts[value] || '';
+  $('#url').dispatchEvent(new Event('input'));
+  $('#tagline').textContent = 'YouTube и SoundCloud — ссылки определяются автоматически.';
+};
+function inferService(url) {
+  try {
+    return new URL(url).hostname.endsWith('soundcloud.com') ? 'soundcloud' : 'youtube';
+  } catch {
+    return service;
+  }
+}
 
-for(const b of document.querySelectorAll('button[data-page]')){const label=b.querySelector('span:not([data-icon])')?.textContent;if(label){b.title=label;b.setAttribute('aria-label',label);}}document.querySelector('.brand').onclick=e=>{e.preventDefault();page('discover');};
+const studioUpdates = showUpdates;
+showUpdates = async function () {
+  await studioUpdates();
+  $('#update-dot').hidden = updateState.status !== 'ready';
+};
 
-const musicOnline=openOnline;let onlineMusicVersion=0;
-openOnline=function(item){musicOnline(item);const version=++onlineMusicVersion;$('#online-music')?.remove();const info=el('div',undefined,'online-music');info.id='online-music';info.setAttribute('aria-live','polite');$('#online-frame').after(info);const show=description=>{if(onlineItem?.url!==item.url||version!==onlineMusicVersion)return;const music=descriptionMusic(description);info.replaceChildren();if(music.bpm)info.append(el('span',music.bpm+' BPM','music-chip'));if(music.key)info.append(el('span',music.key+(music.scale?' '+music.scale:''),'music-chip'));if(music.bpm||music.key)info.append(el('small','Из описания'));};if(item.description)show(item.description);if(item.service==='youtube')(async()=>{try{for(let n=0;n<65;n++){if(onlineItem?.url!==item.url||version!==onlineMusicVersion)return;const r=await api('/api/description/'+item.id);if(r.status==='done'){show(r.description);return;}if(r.status==='error')return;await new Promise(resolve=>setTimeout(resolve,800));}}catch{}})();};
+document.addEventListener('click', (e) => {
+  for (const menu of document.querySelectorAll('.track-menu[open]'))
+    if (!menu.contains(e.target)) menu.open = false;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.body.classList.remove('inspector-drawer');
+  if (
+    e.code === 'Space' &&
+    !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(document.activeElement?.tagName) &&
+    !document.querySelector('dialog[open]') &&
+    activePage !== 'games' &&
+    playingId
+  ) {
+    e.preventDefault();
+    audio.paused ? audio.play().catch(report) : audio.pause();
+  }
+});
+window.addEventListener('yoump3-ready', (e) => toast('Готово: ' + e.detail));
 
+for (const b of document.querySelectorAll('button[data-page]')) {
+  const label = b.querySelector('span:not([data-icon])')?.textContent;
+  if (label) {
+    b.title = label;
+    b.setAttribute('aria-label', label);
+  }
+}
+document.querySelector('.brand').onclick = (e) => {
+  e.preventDefault();
+  page('discover');
+};
 
-const importLabel=document.querySelector('.import-button');importLabel.setAttribute('tabindex','0');importLabel.setAttribute('role','button');importLabel.onkeydown=e=>{if(e.key==='Enter'||e.code==='Space'){e.preventDefault();$('#import').click();}};
-audio.addEventListener('error',()=>{if(playingId)toast('Не удалось воспроизвести файл. Сохраните его и откройте во внешнем плеере.');});
+const musicOnline = openOnline;
+let onlineMusicVersion = 0;
+openOnline = function (item) {
+  musicOnline(item);
+  const version = ++onlineMusicVersion;
+  $('#online-music')?.remove();
+  const info = el('div', undefined, 'online-music');
+  info.id = 'online-music';
+  info.setAttribute('aria-live', 'polite');
+  $('#online-frame').after(info);
+  const show = (description) => {
+    if (onlineItem?.url !== item.url || version !== onlineMusicVersion) return;
+    const music = descriptionMusic(description);
+    info.replaceChildren();
+    if (music.bpm) info.append(el('span', music.bpm + ' BPM', 'music-chip'));
+    if (music.key)
+      info.append(el('span', music.key + (music.scale ? ' ' + music.scale : ''), 'music-chip'));
+    if (music.bpm || music.key) info.append(el('small', 'Из описания'));
+  };
+  if (item.description) show(item.description);
+  if (item.service === 'youtube')
+    (async () => {
+      try {
+        for (let n = 0; n < 65; n++) {
+          if (onlineItem?.url !== item.url || version !== onlineMusicVersion) return;
+          const r = await api('/api/description/' + item.id);
+          if (r.status === 'done') {
+            show(r.description);
+            return;
+          }
+          if (r.status === 'error') return;
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+      } catch {}
+    })();
+};
 
-initGames({jobs:()=>jobs,onSound:()=>{audio.pause();closeOnline();}});
-try{const h=await api('/api/health');ready=h.ready;$('#engine').textContent=ready?'● Локально':'Инструменты недоступны';}catch{}await refresh();setInterval(refresh,1500);
+const importLabel = document.querySelector('.import-button');
+importLabel.setAttribute('tabindex', '0');
+importLabel.setAttribute('role', 'button');
+importLabel.onkeydown = (e) => {
+  if (e.key === 'Enter' || e.code === 'Space') {
+    e.preventDefault();
+    $('#import').click();
+  }
+};
+audio.addEventListener('error', () => {
+  if (playingId)
+    toast('Не удалось воспроизвести файл. Сохраните его и откройте во внешнем плеере.');
+});
+
+const basePlay = playTrack;
+const workspace = installWorkspace({
+  api,
+  toast,
+  report,
+  time,
+  music: resolvedMusic,
+  metric,
+  tile,
+  cover: coverArt,
+  favorite: favoriteButton,
+  compact: compactJob,
+  statuses,
+  setInspected: (id) => {
+    inspectedId = id;
+  },
+  jobs: () => jobs,
+  playing: () => playingId,
+  inspected: () => inspectedId,
+  pageName: () => activePage,
+  audio,
+  clearPlaying: () => {
+    playingId = null;
+    $('#player-title').textContent = 'Выберите трек';
+    $('#player-artist').textContent = '';
+    $('#player-art').replaceChildren(coverArt({ id: 'idle' }));
+    $('#player-favorite').classList.remove('is-favorite');
+    $('#elapsed').textContent = '0:00';
+    $('#duration').textContent = '0:00';
+    $('#seek').value = 0;
+    syncPlayback();
+  },
+  play: (j) => basePlay(j),
+  trim: (j) => openTrim(j),
+  action: (j, label) => rowAction(j, label)?.click(),
+  refresh: () => refresh(),
+  openOriginal,
+  onlineItems: () => searchItems,
+  openOnline: (item) => openOnline(item),
+  playerInfo,
+  restore: (j, position) => {
+    playingId = j.id;
+    audio.src = '/api/stream/' + j.id;
+    playerInfo(j);
+    audio.addEventListener(
+      'loadedmetadata',
+      () => {
+        if (playingId === j.id)
+          audio.currentTime =
+            position >= (audio.duration || 0) - 0.3
+              ? 0
+              : Math.max(0, Math.min(audio.duration || 0, position));
+      },
+      { once: true },
+    );
+  },
+  sync: () => syncPlayback(),
+});
+render = () => workspace.render();
+renderInspector = () => workspace.renderInspector();
+renderQueue = () => workspace.renderQueue();
+playTrack = (j) => workspace.play(j);
+adjacent = (d) => workspace.adjacent(d);
+const basicSync = syncPlayback;
+syncPlayback = () => {
+  basicSync();
+  workspace.syncPlayer();
+};
+audio.onplay = syncPlayback;
+audio.onpause = syncPlayback;
+const basicClose = closeOnline;
+closeOnline = () => {
+  workspace.clearOnline();
+  basicClose();
+};
+const basicOpen = openOnline;
+openOnline = (item) => {
+  basicOpen(item);
+  workspace.attachOnline(item);
+};
+showUpdates = () => workspace.updateUpdates();
+showUpdates();
+const stateRead = (key, fallback) => {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const qualityMemory = stateRead('quality-memory', {}),
+  basicChoose = choose;
+choose = (f) => {
+  basicChoose(f);
+  localStorage.setItem('download-format', f);
+  $('#quality').value = qualityMemory[f] || $('#quality').value;
+};
+$('#quality').onchange = () => {
+  qualityMemory[selected] = $('#quality').value;
+  localStorage.setItem('quality-memory', JSON.stringify(qualityMemory));
+};
+const savedDownloadFormat = localStorage.getItem('download-format');
+choose(formats[savedDownloadFormat] ? savedDownloadFormat : selected);
+const oldDiscoverQuality = discoverQuality;
+discoverQuality = () => {
+  oldDiscoverQuality();
+  localStorage.setItem('discover-format', $('#discover-format').value);
+  $('#discover-quality').value =
+    qualityMemory[$('#discover-format').value] || $('#discover-quality').value;
+};
+$('#discover-format').onchange = discoverQuality;
+$('#discover-quality').onchange = () => {
+  qualityMemory[$('#discover-format').value] = $('#discover-quality').value;
+  localStorage.setItem('quality-memory', JSON.stringify(qualityMemory));
+};
+const savedDiscoverFormat = localStorage.getItem('discover-format');
+if (formats[savedDiscoverFormat]) $('#discover-format').value = savedDiscoverFormat;
+discoverQuality();
+const pasteHandler = $('#paste').onclick;
+$('#paste').onclick = async () => {
+  await pasteHandler();
+  $('#url').dispatchEvent(new Event('input'));
+};
+$('#url').addEventListener('input', () => {
+  const text = $('#url').value.trim(),
+    value = inferService(text);
+  if (/^https:\/\/\S+$/.test(text) && value !== service) {
+    sourceDrafts[value] = text;
+    source(value);
+  }
+});
+const searchCache = stateRead('discover-cache', {});
+function cacheSearch() {
+  searchCache[discoverService] = {
+    query: $('#discover-query').value,
+    items: searchItems.slice(0, 30).map(({ description, ...item }) => item),
+    page: searchPage,
+    scroll: $('#workspace').scrollTop,
+  };
+  localStorage.setItem('discover-cache', JSON.stringify(searchCache));
+}
+discoverSource = (value) => {
+  cacheSearch();
+  cancelSearch();
+  discoverService = value;
+  localStorage.setItem('discover-service', JSON.stringify(value));
+  document.body.dataset.service = value;
+  for (const b of document.querySelectorAll('[data-discover]')) {
+    b.classList.toggle('active', b.dataset.discover === value);
+    b.setAttribute('aria-selected', String(b.dataset.discover === value));
+  }
+  const cached = searchCache[value];
+  searchItems = cached?.items || [];
+  searchPage = cached?.page || 1;
+  searchQuery = cached?.query || '';
+  $('#discover-query').value = searchQuery;
+  $('#discover-message').textContent = searchItems.length ? 'Найдено: ' + searchItems.length : '';
+  renderDiscover();
+  searchControls();
+  requestAnimationFrame(() => ($('#workspace').scrollTop = cached?.scroll || 0));
+};
+const runSearch = searchOnline;
+searchOnline = async (more) => {
+  await runSearch(more);
+  cacheSearch();
+};
+$('#discover-query').addEventListener('input', cacheSearch);
+if (searchCache[discoverService]) {
+  const cached = searchCache[discoverService];
+  searchItems = cached.items || [];
+  searchPage = cached.page || 1;
+  searchQuery = cached.query || '';
+  $('#discover-query').value = searchQuery;
+  if (searchItems.length) renderDiscover();
+}
+for (const b of document.querySelectorAll('[data-discover]')) {
+  const active = b.dataset.discover === discoverService;
+  b.classList.toggle('active', active);
+  b.setAttribute('aria-selected', String(active));
+}
+const scrolls = stateRead('page-scrolls', {}),
+  navigate = page;
+page = (name) => {
+  scrolls[activePage] = $('#workspace').scrollTop;
+  navigate(name);
+  requestAnimationFrame(() => ($('#workspace').scrollTop = scrolls[name] || 0));
+  workspace.savePreferences();
+  localStorage.setItem('page-scrolls', JSON.stringify(scrolls));
+};
+const savedPage = stateRead('workspace-state', {}).page;
+page(
+  ['discover', 'download', 'library', 'favorites', 'games', 'settings'].includes(savedPage)
+    ? savedPage
+    : 'discover',
+);
+const flushPreferences = window.yoump3FlushPreferences;
+window.yoump3FlushPreferences = async () => {
+  scrolls[activePage] = $('#workspace').scrollTop;
+  localStorage.setItem('page-scrolls', JSON.stringify(scrolls));
+  workspace.savePreferences();
+  await flushPreferences();
+};
+await initGames({
+  jobs: () => jobs,
+  onSound: () => {
+    audio.pause();
+    closeOnline();
+  },
+});
+try {
+  const h = await api('/api/health');
+  ready = h.ready;
+  $('#engine').textContent = ready ? '● Локально' : 'Инструменты недоступны';
+} catch {}
+await refresh();
+requestAnimationFrame(() => ($('#workspace').scrollTop = scrolls[activePage] || 0));
+window.addEventListener('pagehide', () => {
+  scrolls[activePage] = $('#workspace').scrollTop;
+  localStorage.setItem('page-scrolls', JSON.stringify(scrolls));
+});
+setInterval(refresh, 2500);
