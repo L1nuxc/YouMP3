@@ -1,4 +1,5 @@
 import { createIcon as icon } from './icons.js';
+import { renderLibrary } from './library-view.js';
 const $ = (s) => document.querySelector(s),
   all = (s) => [...document.querySelectorAll(s)];
 const el = (tag, text, cls) => {
@@ -506,44 +507,6 @@ export function installWorkspace(ctx) {
           : (a, b) => b.created - a.created,
     );
   }
-  function card(j) {
-    const node = ctx.tile(j, 0),
-      check = el('input');
-    check.type = 'checkbox';
-    check.className = 'track-select';
-    check.checked = selected.has(j.id);
-    check.setAttribute('aria-label', 'Выбрать ' + j.title);
-    check.onchange = () => {
-      check.checked ? selected.add(j.id) : selected.delete(j.id);
-      signature = '';
-      render();
-    };
-    node.prepend(check);
-    node.classList.toggle('bulk-selected', selected.has(j.id));
-    node.oncontextmenu = (e) => {
-      e.preventDefault();
-      trackMenu(j, node.querySelector('.tile-title'));
-    };
-    if (view !== 'grid') {
-      const m = ctx.music(j),
-        extra = el('div', undefined, 'track-columns');
-      extra.append(
-        el('span', j.format.toUpperCase()),
-        el('span', m.bpm ? m.bpm + ' BPM' : '—'),
-        el('span', m.key ? m.key + (m.scale ? ' ' + m.scale : '') : '—'),
-      );
-      node.append(
-        extra,
-        iconButton('plus', 'Включить следующим', () => enqueue(j)),
-        iconButton(
-          'trash',
-          'Удалить из библиотеки',
-          guard(() => trash([j.id])),
-        ),
-      );
-    }
-    return node;
-  }
   async function trash(ids) {
     const done = [];
     for (const id of ids) {
@@ -789,10 +752,28 @@ export function installWorkspace(ctx) {
     const sig = JSON.stringify([currentList, view, [...selected], ctx.inspected()]);
     if (sig !== signature) {
       signature = sig;
-      $('#jobs').className = 'album-grid view-' + view;
+      $('#jobs').className = 'library-view view-' + view;
       $('#jobs').replaceChildren(
         ...(currentList.length
-          ? currentList.map(card)
+          ? renderLibrary(currentList, view, {
+              ...ctx,
+              selected,
+              enqueue,
+              menu: trackMenu,
+              select: (id, checked) => {
+                checked ? selected.add(id) : selected.delete(id);
+                signature = '';
+                render();
+              },
+              open: (j) => {
+                ctx.setInspected(j.id);
+                document.body.classList.add('inspector-drawer');
+                inspectorSig = '';
+                render();
+              },
+              play,
+              trash: (id) => guard(() => trash([id]))(),
+            })
           : [
               el(
                 'div',
@@ -997,7 +978,41 @@ export function installWorkspace(ctx) {
   aButton.title = 'Начало повторяемого участка';
   bButton.title = 'Конец повторяемого участка';
   abControls.append(aButton, bButton, loopButton);
-  $('.timeline').after(abControls);
+  const loopPanel = el('div', undefined, 'player-loop-panel');
+  loopPanel.hidden = true;
+  loopPanel.id = 'player-loop-panel';
+  loopPanel.append(
+    el('strong', 'Повтор фрагмента'),
+    el('p', 'Отметьте начало A и конец B во время прослушивания.'),
+    abControls,
+  );
+  const loopToggle = button(
+    'A–B',
+    () => {
+      loopPanel.hidden = !loopPanel.hidden;
+      loopToggle.setAttribute('aria-expanded', String(!loopPanel.hidden));
+    },
+    'loop-toggle',
+  );
+  loopToggle.title = 'Повторить фрагмент';
+  loopToggle.setAttribute('aria-label', 'Повторить фрагмент');
+  loopToggle.setAttribute('aria-expanded', 'false');
+  loopToggle.setAttribute('aria-controls', loopPanel.id);
+  $('.player-volume').insertBefore(loopToggle, queueButton);
+  $('.player-volume').append(loopPanel);
+  document.addEventListener('pointerdown', (e) => {
+    if (!loopPanel.contains(e.target) && !loopToggle.contains(e.target)) {
+      loopPanel.hidden = true;
+      loopToggle.setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !loopPanel.hidden) {
+      loopPanel.hidden = true;
+      loopToggle.setAttribute('aria-expanded', 'false');
+      loopToggle.focus();
+    }
+  });
   const seekTip = el('span', undefined, 'seek-tooltip');
   $('.timeline').append(seekTip);
   $('#seek').addEventListener('pointermove', (e) => {
@@ -1018,6 +1033,7 @@ export function installWorkspace(ctx) {
       'Повтор: ' + { off: 'выключен', all: 'вся очередь', one: 'один трек' }[repeat];
     repeatButton.dataset.mode = repeat;
     loopButton.classList.toggle('active', ab.on);
+    loopToggle.classList.toggle('active', ab.on);
     aButton.classList.toggle('active', ab.a !== null);
     bButton.classList.toggle('active', ab.b !== null);
     aButton.title = ab.a === null ? 'Начало участка' : 'A: ' + ctx.time(ab.a);
@@ -1026,6 +1042,7 @@ export function installWorkspace(ctx) {
       $('#player-title').textContent = online.title;
       $('#player-artist').textContent = (online.artist || '') + ' · SoundCloud';
       $('#play-pause').replaceChildren(icon(onlinePaused ? 'play' : 'pause'));
+      $('#play-pause').setAttribute('aria-label', onlinePaused ? 'Воспроизвести' : 'Пауза');
       $('#play-pause').disabled = !widget;
       $('#player').classList.remove('is-empty');
       $('#seek').disabled = !widget;
@@ -1067,13 +1084,19 @@ export function installWorkspace(ctx) {
     ctx.audio.paused ? ctx.audio.play().catch(report) : ctx.audio.pause();
   };
   $('#play-pause').onclick = toggle;
+  let volumeBeforeMute = ctx.audio.volume || 0.65;
   const setVolume = (value) => {
     value = Math.max(0, Math.min(1, value));
     if (online?.service === 'soundcloud') {
       widget?.setVolume(value * 100);
       write('online-volume', value);
-      if (onlineVolume) onlineVolume.value = value;
+      if (onlineVolume) {
+        onlineVolume.value = value;
+        onlineVolume.style.setProperty('--range-fill', value * 100 + '%');
+        $('.online-volume output').textContent = Math.round(value * 100) + '%';
+      }
     } else {
+      if (ctx.audio.volume > 0) volumeBeforeMute = ctx.audio.volume;
       ctx.audio.volume = value;
       ctx.audio.muted = false;
       write('volume', value);
@@ -1083,6 +1106,20 @@ export function installWorkspace(ctx) {
     ctx.sync();
   };
   $('#volume').oninput = () => setVolume(+$('#volume').value);
+  const wheelVolume = (e) => {
+    if (!e.deltaY || (online && !widget)) return;
+    e.preventDefault();
+    setVolume(
+      (online ? read('online-volume', 0.65) : ctx.audio.muted ? 0 : ctx.audio.volume) -
+        Math.sign(e.deltaY) * 0.05,
+    );
+  };
+  // Capture only the volume control, so scrolling over the player still scrolls normally.
+  const volumeControl = el('div', undefined, 'volume-control');
+  $('#mute').before(volumeControl);
+  volumeControl.append($('#mute'), $('#volume'));
+  volumeControl.title = 'Громкость · колесо мыши';
+  volumeControl.addEventListener('wheel', wheelVolume, { passive: false });
   $('#mute').onclick = () => {
     if (online && widget) {
       widget.getVolume((v) => {
@@ -1092,8 +1129,13 @@ export function installWorkspace(ctx) {
         } else setVolume(read('online-before-mute', 0.65));
       });
     } else {
-      ctx.audio.muted = !ctx.audio.muted;
-      ctx.sync();
+      if (ctx.audio.muted || ctx.audio.volume === 0)
+        setVolume(ctx.audio.volume || volumeBeforeMute);
+      else {
+        volumeBeforeMute = ctx.audio.volume;
+        ctx.audio.muted = true;
+        ctx.sync();
+      }
     }
   };
   const seek = (delta) => {
@@ -1143,13 +1185,14 @@ export function installWorkspace(ctx) {
     if (item.service !== 'soundcloud') return;
     const controls = el('div', undefined, 'online-volume'),
       label = el('label', 'Громкость SoundCloud'),
-      value = el('span');
+      value = el('output');
     onlineVolume = el('input');
     onlineVolume.type = 'range';
     onlineVolume.min = 0;
     onlineVolume.max = 1;
     onlineVolume.step = 0.01;
     onlineVolume.value = read('online-volume', 0.65);
+    onlineVolume.style.setProperty('--range-fill', +onlineVolume.value * 100 + '%');
     onlineVolume.setAttribute('aria-label', 'Громкость SoundCloud');
     onlineVolume.disabled = true;
     onlineVolume.oninput = () => {
@@ -1158,6 +1201,7 @@ export function installWorkspace(ctx) {
     };
     label.append(onlineVolume, value);
     controls.append(label);
+    controls.addEventListener('wheel', wheelVolume, { passive: false });
     $('#online-frame').after(controls);
     try {
       await widgetAPI();
@@ -1487,11 +1531,13 @@ export function installWorkspace(ctx) {
   stepSelect.value = read('seek-step', 5);
   stepSelect.onchange = () => write('seek-step', +stepSelect.value);
   stepLabel.append(stepSelect);
-  stepSection.append(
-    stepLabel,
+  stepLabel.className = 'setting-field';
+  const playerSettingsActions = el('div', undefined, 'settings-actions');
+  playerSettingsActions.append(
     button('Горячие клавиши', showShortcuts),
     button('Повторить знакомство', showIntro),
   );
+  stepSection.append(stepLabel, playerSettingsActions);
   settings.append(stepSection);
   function showShortcuts() {
     const d = el('dialog', undefined, 'shortcuts-dialog');

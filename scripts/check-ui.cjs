@@ -41,8 +41,11 @@ app.whenReady().then(async () => {
       );
       jobs.push({
         id,
-        title: 'Тестовая запись ' + (i + 1),
-        artist: 'Локальный файл',
+        title:
+          i === 0
+            ? '[FREE] Очень длинное название трека + experimental type beat "9223372036854775806" (prod. by @test-fixture)'
+            : 'Тестовая запись ' + (i + 1),
+        artist: i === 1 ? 'Очень длинное имя исполнителя без сокращения' : 'Локальный файл',
         track: 'Тестовая запись ' + (i + 1),
         format: 'mp3',
         quality: '192',
@@ -58,6 +61,15 @@ app.whenReady().then(async () => {
       });
     }
     await fs.writeFile(path.join(root, 'library.json'), JSON.stringify(jobs));
+    await fs.writeFile(
+      path.join(root, 'preferences.json'),
+      JSON.stringify({
+        'intro-complete': 'true',
+        'library-view': '"grid"',
+        volume: '0.65',
+        'seek-step': '5',
+      }),
+    );
     await fs.writeFile(
       path.join(root, 'games.json'),
       JSON.stringify({
@@ -155,19 +167,60 @@ app.whenReady().then(async () => {
       assert(!document.querySelector('.bulk-actions').hidden, 'bulk actions');
       document.querySelector('[aria-label="Снять выделение"]').click();
       document.querySelector('.tile-cover').click();
-      await wait(300);
+      for (let i = 0; i < 100 && document.querySelector('#audio').readyState < 1; i++)
+        await wait(50);
       assert(document.querySelector('#audio').src.includes('/api/stream/'), 'real audio');
+      assert(
+        Number.isFinite(document.querySelector('#audio').duration),
+        'playback metadata loaded',
+      );
       document.querySelector('#audio').pause();
+      document.querySelector('#audio').currentTime = 1;
       document.body.focus();
       const before = document.querySelector('#audio').currentTime;
       document.body.dispatchEvent(
         new KeyboardEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight', bubbles: true }),
       );
-      assert(document.querySelector('#audio').currentTime >= before + 4, 'seek hotkey');
+      assert(
+        document.querySelector('#audio').currentTime >= before + 4,
+        'seek hotkey ' +
+          JSON.stringify({
+            before,
+            after: document.querySelector('#audio').currentTime,
+            duration: document.querySelector('#audio').duration,
+            dialogs: [...document.querySelectorAll('dialog[open]')].map((d) => d.id),
+            page: document.querySelector('main > section:not([hidden])')?.id,
+          }),
+      );
       assert(
         getComputedStyle(document.querySelector('.tile-title')).outlineStyle === 'none',
         'no focus outline',
       );
+      const audio = document.querySelector('#audio'),
+        volume = document.querySelector('.volume-control');
+      audio.volume = 0.4;
+      volume.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, cancelable: true }));
+      assert(Math.abs(audio.volume - 0.45) < 0.001, 'volume wheel up');
+      audio.volume = 0.99;
+      volume.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, cancelable: true }));
+      assert(audio.volume === 1, 'volume wheel clamps upper bound');
+      audio.volume = 0.01;
+      volume.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, cancelable: true }));
+      assert(audio.volume === 0, 'volume wheel clamps lower bound');
+      document.querySelector('#mute').click();
+      assert(audio.volume > 0 && !audio.muted, 'mute button restores sound after zero volume');
+      audio.volume = 0.65;
+      assert(
+        document.querySelector('[aria-label="Перемешивание"] use').getAttribute('href') ===
+          '/lucide.svg#shuffle',
+        'official shuffle icon',
+      );
+      for (const selector of ['#player', '#context-panel']) {
+        const color = getComputedStyle(document.querySelector(selector))
+          .backgroundColor.match(/\d+/g)
+          .map(Number);
+        assert(color[0] === color[1] && color[1] === color[2], 'neutral background ' + selector);
+      }
     });
     await delay(200);
     await fs.writeFile(
@@ -310,6 +363,8 @@ app.whenReady().then(async () => {
         await wait(50);
       if (document.querySelectorAll('.track-tile').length !== 6)
         throw Error('Undo did not restore');
+      if (document.querySelector('#library-message').textContent)
+        throw Error('False playback error after stopping a track');
     });
     phase = 'online-controls';
     await run(async () => {
@@ -352,8 +407,13 @@ app.whenReady().then(async () => {
       const items = [1, 2].map((i) => ({
         id: 'qa' + i,
         url: 'https://soundcloud.com/test-fixture/track-' + i,
-        title: 'Тестовый результат ' + i,
-        artist: 'Тест поиска',
+        title:
+          'Тестовый результат ' +
+          i +
+          ' — Очень длинное название SoundCloud track / experimental + producer + collaboration '.repeat(
+            3,
+          ),
+        artist: 'Тест поиска ' + 'Очень длинное имя исполнителя '.repeat(4),
         service: 'soundcloud',
         duration: 120,
         views: 0,
@@ -393,15 +453,44 @@ app.whenReady().then(async () => {
         new KeyboardEvent('keydown', { key: 'ArrowUp', code: 'ArrowUp', bubbles: true }),
       );
       assert(Math.abs(window.__qaWidget.volume - 32) < 0.1, 'online volume hotkey');
+      document
+        .querySelector('.online-volume')
+        .dispatchEvent(new WheelEvent('wheel', { deltaY: 100, cancelable: true }));
+      assert(Math.abs(window.__qaWidget.volume - 27) < 0.1, 'online wheel volume');
+      assert(
+        document.querySelector('.online-volume output').textContent === '27%',
+        'online volume label synchronized',
+      );
+      const result = document.querySelector('.search-card');
+      assert(
+        result.querySelector('.result-body').getBoundingClientRect().right <=
+          result.querySelector('.result-actions').getBoundingClientRect().left,
+        'SoundCloud text/action overlap',
+      );
+      for (const p of ['.online-heading', '.online-bottom', '.online-volume']) {
+        const n = document.querySelector(p);
+        assert(n.scrollWidth <= n.clientWidth + 1, 'SoundCloud overflow ' + p);
+      }
       document.querySelector('#seek').value = 10;
       document.querySelector('#seek').dispatchEvent(new Event('input'));
       assert(window.__qaWidget.position === 10000, 'online seek');
+      window.fetch = originalFetch;
+    });
+    await delay(400);
+    await fs.writeFile(
+      path.resolve('build/design-soundcloud.png'),
+      (await w.webContents.capturePage()).toPNG(),
+    );
+    await run(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms)),
+        assert = (v, m) => {
+          if (!v) throw Error(m);
+        };
       document.querySelector('#online-close').click();
       assert(
         !document.querySelector('#player-title').textContent.includes('Тестовый результат'),
         'online close restores local player',
       );
-      window.fetch = originalFetch;
       window.__qaDownloads = 0;
       let update = {
         status: 'available',
@@ -435,13 +524,114 @@ app.whenReady().then(async () => {
       path.resolve('build/design-settings.png'),
       (await w.webContents.capturePage()).toPNG(),
     );
-    for (const width of [1000, 760]) {
+    for (const width of [1440, 1360, 1000, 760]) {
       phase = 'width-' + width;
       w.setContentSize(width, 800);
       await run(() => document.querySelector('[data-page=library]').click());
       await delay(150);
       await run(() => {
         if (document.documentElement.scrollWidth > innerWidth) throw Error('Horizontal overflow');
+      });
+      for (const view of ['Список', 'Таблица']) {
+        await run(() => document.querySelector('[aria-label="Список"]').click());
+        if (view === 'Таблица')
+          await run(() => document.querySelector('[aria-label="Таблица"]').click());
+        await delay(400);
+        await run(() => {
+          const assert = (v, m) => {
+              if (!v) throw Error(m);
+            },
+            root = document.querySelector('#jobs');
+          if (root.classList.contains('view-list')) {
+            assert(!root.querySelector('table'), 'list is not a table');
+            for (const row of root.querySelectorAll('.library-row')) {
+              const boxes = [...row.children].map((n) => n.getBoundingClientRect());
+              assert(
+                Math.abs(row.getBoundingClientRect().width - root.clientWidth) < 2,
+                'list row full width',
+              );
+              for (let i = 1; i < boxes.length; i++)
+                assert(boxes[i].left >= boxes[i - 1].right, 'list columns overlap');
+              const title = row.querySelector('.tile-title'),
+                by = row.querySelector('.track-artist');
+              assert(
+                title.getBoundingClientRect().bottom <= by.getBoundingClientRect().top,
+                'title and artist overlap',
+              );
+              assert(
+                title.clientWidth < title.scrollWidth || title.clientWidth > 0,
+                'title visible',
+              );
+            }
+          } else {
+            assert(root.querySelectorAll('thead th').length === 8, 'table headings');
+            for (const row of root.querySelectorAll('tbody tr')) {
+              const cells = [...row.children].map((n) => n.getBoundingClientRect());
+              for (let i = 1; i < cells.length; i++)
+                assert(cells[i].left >= cells[i - 1].right - 1, 'table cells overlap');
+              const art = row.querySelector('.tile-cover').getBoundingClientRect(),
+                title = row.querySelector('.tile-title').getBoundingClientRect();
+              assert(
+                title.left >= art.right && title.right <= cells[1].right,
+                'table title contained',
+              );
+            }
+            assert(
+              document.documentElement.scrollWidth <= innerWidth,
+              'table scroll stays within library',
+            );
+          }
+          const player = document.querySelector('#player'),
+            sections = [...player.children]
+              .filter((n) => n.tagName !== 'AUDIO')
+              .map((n) => n.getBoundingClientRect());
+          assert(player.clientHeight <= 92, 'compact player');
+          assert(
+            sections[0].right <= sections[1].left && sections[1].right <= sections[2].left,
+            'player sections overlap',
+          );
+        });
+        await fs.writeFile(
+          path.resolve(
+            'build/design-' + width + '-' + (view === 'Список' ? 'list' : 'table') + '.png',
+          ),
+          (await w.webContents.capturePage()).toPNG(),
+        );
+      }
+      await run(() => {
+        const search = document.querySelector('#search');
+        search.value = 'Тестовая запись 6';
+        search.dispatchEvent(new Event('input'));
+        document.querySelector('[aria-label="Список"]').click();
+        const rows = document.querySelectorAll('.library-row');
+        if (
+          rows.length !== 1 ||
+          Math.abs(
+            rows[0].getBoundingClientRect().width - document.querySelector('#jobs').clientWidth,
+          ) > 2
+        )
+          throw Error('Single SoundCloud row shrinks');
+        search.value = '';
+        search.dispatchEvent(new Event('input'));
+        document.querySelector('[data-page=settings]').click();
+        const actions = [...document.querySelectorAll('.settings-actions')];
+        for (const group of actions) {
+          const buttons = [...group.children].map((n) => n.getBoundingClientRect());
+          for (let i = 1; i < buttons.length; i++) {
+            const a = buttons[i - 1],
+              b = buttons[i];
+            if (!(b.left >= a.right + 6 || b.top >= a.bottom + 6))
+              throw Error('Settings buttons touch');
+          }
+        }
+        document.querySelector('[data-page=games]').click();
+        const sound = document.querySelector('#game-sound');
+        if (
+          sound.getAttribute('role') !== 'switch' ||
+          getComputedStyle(sound).appearance !== 'none'
+        )
+          throw Error('Game effects switch');
+        document.querySelector('[data-page=library]').click();
       });
       await fs.writeFile(
         path.resolve('build/design-' + width + '.png'),
@@ -457,6 +647,10 @@ app.whenReady().then(async () => {
           checks: [
             'library',
             'list/table',
+            'long titles, full-width rows and column geometry at 1440/1360/1000/760',
+            'neutral chrome and official Lucide icons',
+            'local/SoundCloud volume wheel, bounds and unmute',
+            'settings button spacing and game effects switch',
             'bulk selection',
             'visible actions',
             'real audio',

@@ -744,10 +744,21 @@ function guess() {
   const volumeText = make('span');
   function setVolume() {
     if (media) media.volume = +volume.value;
+    volume.style.setProperty('--range-fill', +volume.value * 100 + '%');
     volumeText.textContent = Math.round(+volume.value * 100) + '%';
     localStorage.setItem('guess-volume', volume.value);
   }
   volume.oninput = setVolume;
+  volume.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.deltaY) return;
+      e.preventDefault();
+      volume.value = Math.max(0, Math.min(1, +volume.value - Math.sign(e.deltaY) * 0.05));
+      setVolume();
+    },
+    { passive: false },
+  );
   settings.append(
     make('span', 'Фрагмент'),
     lengthSelect,

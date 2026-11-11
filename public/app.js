@@ -393,9 +393,11 @@ async function playTrack(j) {
   }
   $('#player').hidden = false;
   document.body.classList.add('has-player');
+  $('#library-message').textContent = '';
   try {
     await audio.play();
-  } catch {
+  } catch (error) {
+    if (error.name === 'AbortError' || playingId !== j.id) return;
     $('#library-message').textContent =
       'Не удалось воспроизвести этот формат. Сохраните файл и откройте во внешнем плеере.';
   }
@@ -425,6 +427,7 @@ audio.onpause = () => {
   $('#play-pause').setAttribute('aria-label', 'Воспроизвести');
 };
 audio.onerror = () => {
+  if (!playingId || !audio.getAttribute('src')) return;
   $('#library-message').textContent = 'Файл не найден или не поддерживается плеером.';
 };
 $('#seek').oninput = () => {
@@ -1896,7 +1899,11 @@ function syncPlayback() {
     const overlay = tile.querySelector('.tile-play-overlay');
     if (overlay) overlay.replaceChildren(studioIcon(playing ? 'pause' : 'play'));
   }
-  $('#mute').replaceChildren(studioIcon(audio.muted ? 'muted' : 'volume'));
+  $('#mute').replaceChildren(studioIcon(audio.muted || audio.volume === 0 ? 'muted' : 'volume'));
+  $('#mute').setAttribute(
+    'aria-label',
+    audio.muted || audio.volume === 0 ? 'Включить звук' : 'Выключить звук',
+  );
 }
 audio.onplay = syncPlayback;
 audio.onpause = syncPlayback;
@@ -2169,6 +2176,9 @@ const workspace = installWorkspace({
   audio,
   clearPlaying: () => {
     playingId = null;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
     $('#player-title').textContent = 'Выберите трек';
     $('#player-artist').textContent = '';
     $('#player-art').replaceChildren(coverArt({ id: 'idle' }));
@@ -2176,6 +2186,8 @@ const workspace = installWorkspace({
     $('#elapsed').textContent = '0:00';
     $('#duration').textContent = '0:00';
     $('#seek').value = 0;
+    $('#seek').max = 100;
+    $('#seek').style.setProperty('--range-fill', '0%');
     syncPlayback();
   },
   play: (j) => basePlay(j),

@@ -146,7 +146,7 @@
         <section id="settings-page" hidden>
           <div class="page-heading">
             <h1>Настройки</h1>
-            <span class="version-badge">v1.0.0</span>
+            <span class="version-badge">v1.0.1</span>
           </div>
           <div class="settings-card">
             <section>
@@ -262,9 +262,11 @@
               <h1>Перерыв.</h1>
               <p>4 игры · рекорды · сохранение прогресса</p>
             </div>
-            <div>
-              <button id="game-resume">Продолжить последнюю игру →</button
-              ><label><input id="game-sound" type="checkbox" /> Звуки эффектов</label>
+            <div class="games-actions">
+              <button id="game-resume"><span data-icon="play"></span>Продолжить игру</button>
+              <label class="toggle-row game-sound-toggle"
+                ><span>Звуки эффектов</span><input id="game-sound" type="checkbox" role="switch"
+              /></label>
             </div>
           </div>
           <div id="game-menu" class="game-menu"></div>

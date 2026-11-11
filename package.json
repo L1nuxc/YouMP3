@@ -1,6 +1,6 @@
 {
   "name": "yoump3-local",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -19,6 +19,7 @@
   "devDependencies": {
     "electron": "^45.2.3",
     "electron-builder": "^26.18.0",
+    "lucide-static": "1.71.0",
     "prettier": "3.9.10"
   },
   "description": "YouMP3 — локальная аудиотека YouTube и SoundCloud",
