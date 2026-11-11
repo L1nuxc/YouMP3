@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Force build | Out-Null
 $buildRoot = (Resolve-Path -LiteralPath build).Path
 $sourceStage = Join-Path $buildRoot ('source-' + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $sourceStage | Out-Null
-$rootFiles = @('server.mjs','package.json','package-lock.json','setup.ps1','start.cmd','.gitignore','.prettierrc.json','.prettierignore','LICENSE','README.md','DISTRIBUTION.md','THIRD-PARTY-NOTICES.md')
+$rootFiles = @('server.mjs','package.json','package-lock.json','setup.ps1','start.cmd','.gitignore','.gitattributes','.prettierrc.json','.prettierignore','LICENSE','README.md','DISTRIBUTION.md','THIRD-PARTY-NOTICES.md')
 $allowed = '^(desktop/[a-zA-Z0-9.-]+\.(cjs|svg|png|ico)|public/[a-zA-Z0-9.-]+\.(js|css|html|svg)|src/[a-zA-Z0-9.-]+\.(mjs|cjs)|test/[a-zA-Z0-9.-]+\.mjs|search-plugins/yoump3/yt_dlp_plugins/extractor/[a-zA-Z0-9_-]+\.py|\.github/workflows/release\.yml|scripts/(smoke\.mjs|check-search\.mjs|package-source\.ps1|check-ui\.cjs))$'
 $candidates = @($rootFiles | Where-Object { Test-Path -LiteralPath (Join-Path $workspace $_) -PathType Leaf })
 foreach ($directory in @('desktop','public','src','test','search-plugins','.github/workflows','scripts')) {
